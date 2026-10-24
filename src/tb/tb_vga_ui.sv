@@ -8,7 +8,8 @@
 //   python3 tools/frame_to_png.py /tmp/frame.txt frame.png
 module tb_vga_ui #(
     parameter SPLASH_LOG2 = 8,              // 8 = no splash; 21 = splash in the first frame
-    parameter PLAY        = 1
+    parameter PLAY        = 1,
+    parameter MENU        = 0
 );
   bit         clk;
   logic       rst_n;
@@ -39,6 +40,7 @@ module tb_vga_ui #(
     .play ( PLAY[0] ), .volume ( 4'd11 ),
     .time_bcd ( 16'h0123 ), .len_bcd ( 16'h0345 ), .len_valid ( 1'b1 ), .progress ( 10'd400 ),
     .track_idx ( 3'd0 ), .key_mask ( 36'd1 << ( 12 + 9 ) ),
+    .menu_mode ( MENU[0] ), .menu_sel ( 3'd1 ), .dancing ( PLAY[0] ),
     .scope_addr ( scope_addr ), .scope_data ( scope_data ), .frame_start ( fs ),
     .txt_we ( 1'b0 ), .txt_addr ( 13'd0 ), .txt_data ( 12'd0 ),
     .red ( r ), .green ( g ), .blue ( b ),

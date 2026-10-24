@@ -6,6 +6,7 @@ Encoding is CP866 (DOS Cyrillic), so Russian text works on the screen:
   0x80-0xAF  А-Я а-п
   0xE0-0xEF  р-я,  0xF0 Ё, 0xF1 ё,  0xFA · (middle dot)
   0x01-0x07  UI icons drawn below (note, play, pause, speaker, dot, arrows)
+  0xB0-0xB2  shades, 0xDB full block (menu bars)
 
 Glyphs are rasterized from DejaVu Sans Mono (free license, Bitstream Vera /
 public domain changes), 13 px, threshold 96 - this size keeps Cyrillic readable
@@ -106,9 +107,19 @@ def main():
     glyphs = [[0] * 16 for _ in range(256)]
 
     codes = list(range(0x20, 0x7F)) + list(range(0x80, 0xB0)) + list(range(0xE0, 0xF2)) + [0xFA]
+    blocks = {0xB0: 0x40, 0xB1: 0x80, 0xB2: 0xC0, 0xDB: 0x100}   # light, medium, dark shade, full block
     for code in codes:
         ch = bytes([code]).decode("cp866")
         glyphs[code] = render_char(font, ch)
+
+    # block glyphs drawn as pixel patterns: they must fill the whole 8x16 cell
+    for code, level in blocks.items():
+        if level >= 0x100:
+            glyphs[code] = [0xFF] * 16
+        else:
+            pat = {0x40: (0x88, 0x22), 0x80: (0xAA, 0x55), 0xC0: (0xEE, 0xBB)}[level]
+            glyphs[code] = [pat[y % 2] for y in range(16)]
+        glyphs[code][0] = 0x00                                  # 1 px gap between bar rows
 
     for code, pic in ICONS.items():
         assert len(pic) == 16 and all(len(r) == 8 for r in pic), hex(code)

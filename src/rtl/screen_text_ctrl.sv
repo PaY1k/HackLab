@@ -3,6 +3,7 @@
 //   title     row 30, col 4,  40 chars : name of the current track (+ note on track 0)
 //   source    row 1,  col 72, 12 chars : СИНТЕЗ / BRAM / SD-КАРТА / ПК / UART
 //   list 4..6 rows 12/14/16, col 9, 18 chars : SD files, PC stream title
+//   menu      rows 6..17, col 36, 52 chars : synth settings (SW14), cleared when off
 //
 // A text job is redone when what it shows changes. Characters go out one per
 // clock as {addr, color, char} into a small FIFO that crosses to pixel_clk
@@ -27,33 +28,42 @@ module screen_text_ctrl #(
     input  wire  [ 7:0]  pc_title_char ,
     input  wire          pc_title_valid,
     input  wire          pc_title_chg  ,
+  //--------- Synth menu                         --------//
+    input  wire          menu_mode     ,
+    input  wire  [ 2:0]  menu_sel      ,
+    input  wire  [31:0]  synth_params  ,
   //--------- Text writes                        --------//
     output logic         txt_we        ,
     output logic [24:0]  txt_word      ,   // {addr[12:0], color[3:0], char[7:0]}
     input  wire          txt_full
 );
 
-  logic [7:0] str_mem [0:511];
+  logic [7:0] str_mem [0:1023];
   initial $readmemh( STR_FILE, str_mem );
 
   // string slots (see gen_tables.py)
-  localparam [3:0] S_SYNTH = 4'd0, S_MEL0 = 4'd1, S_MEL1 = 4'd2, S_NOCARD = 4'd3, S_NOFILE = 4'd4,
-                   S_PC = 4'd5, S_SRC0 = 4'd6, S_READING = 4'd10, S_BADFMT = 4'd11;
+  localparam [4:0] S_SYNTH = 5'd0, S_MEL0 = 5'd1, S_MEL1 = 5'd2, S_NOCARD = 5'd3, S_NOFILE = 5'd4,
+                   S_PC = 5'd5, S_SRC0 = 5'd6, S_READING = 5'd10, S_BADFMT = 5'd11,
+                   S_MENU = 5'd12, S_PNAME = 5'd13, S_WAVE = 5'd21, S_HINT = 5'd25;
 
   // SD status codes (sd_player.sv)
   localparam [2:0] SD_NOCARD = 3'd0, SD_MOUNT = 3'd1, SD_FMTERR = 3'd4, SD_FSERR = 3'd5;
 
-  typedef enum logic [2:0] { J_TITLE, J_SRC, J_L3, J_L4, J_L5, J_NONE } job_t;
+  typedef enum logic [2:0] { J_TITLE, J_SRC, J_L3, J_L4, J_L5, J_MENU, J_NONE } job_t;
 
-  logic [4:0] dirty;
+  logic [5:0] dirty;
+  logic [3:0] mr;                 // menu job: row 0..11
+  logic [5:0] mc;                 //           column 0..51
   job_t       job;
   logic [5:0] i;
   logic [5:0] len;
   logic [12:0] base;
 
 //------------- What changed                                     -------------//
-  logic [2:0] track_q, note_q, oct_q, sd_status_q;
+  logic [2:0] track_q, note_q, oct_q, sd_status_q, menu_sel_q;
   logic [1:0] sd_nfiles_q;
+  logic       menu_mode_q;
+  logic [31:0] params_q;
   wire        sd_track = ( track == 3'd3 ) || ( track == 3'd4 );
 
   always_ff @( posedge clk or negedge rst_n ) begin
@@ -63,6 +73,9 @@ module screen_text_ctrl #(
       oct_q       <= '0;
       sd_status_q <= '0;
       sd_nfiles_q <= '0;
+      menu_sel_q  <= '0;
+      menu_mode_q <= 1'b0;
+      params_q    <= '0;
     end
     else begin
       track_q     <= track;
@@ -70,10 +83,14 @@ module screen_text_ctrl #(
       oct_q       <= octave;
       sd_status_q <= sd_status;
       sd_nfiles_q <= sd_nfiles;
+      menu_sel_q  <= menu_sel;
+      menu_mode_q <= menu_mode;
+      params_q    <= synth_params;
     end
   end
 
-  wire [4:0] set_dirty = {
+  wire [5:0] set_dirty = {
+    ( menu_mode != menu_mode_q ) || ( menu_mode && ( menu_sel != menu_sel_q || synth_params != params_q ) ),  // J_MENU
     pc_title_chg,                                                            // J_L5
     ( sd_status != sd_status_q ) || ( sd_nfiles != sd_nfiles_q ),            // J_L4
     ( sd_status != sd_status_q ) || ( sd_nfiles != sd_nfiles_q ),            // J_L3
@@ -95,7 +112,7 @@ module screen_text_ctrl #(
   endfunction
 
   // slot shown instead of an SD file name
-  function automatic [3:0] sd_msg (input [2:0] st);
+  function automatic [4:0] sd_msg (input [2:0] st);
     case ( st )
       SD_NOCARD: sd_msg = S_NOCARD;
       SD_MOUNT:  sd_msg = S_READING;
@@ -108,7 +125,7 @@ module screen_text_ctrl #(
   logic [3:0] color;
   logic       sd_file;          // which SD file this job shows
   logic       use_sd_name, use_pc;
-  logic [3:0] slot;
+  logic [4:0] slot;
 
   always_comb begin
     sd_file     = 1'b0;
@@ -135,9 +152,9 @@ module screen_text_ctrl #(
         color = 4'd4;
         case ( track )
           3'd0:       slot = S_SRC0;
-          3'd1, 3'd2: slot = S_SRC0 + 4'd1;
-          3'd5:       slot = S_SRC0 + 4'd3;
-          default:    slot = S_SRC0 + 4'd2;
+          3'd1, 3'd2: slot = S_SRC0 + 5'd1;
+          3'd5:       slot = S_SRC0 + 5'd3;
+          default:    slot = S_SRC0 + 5'd2;
         endcase
       end
       J_L3, J_L4: begin
@@ -168,10 +185,63 @@ module screen_text_ctrl #(
   end
 //____________________________________________________________________________//
 
+//------------- Menu characters                                  -------------//
+  logic [7:0] m_ch;
+  logic [3:0] m_color;
+  logic [2:0] m_p;            // parameter of this row
+  logic [3:0] m_val;
+  logic [5:0] m_rel;          // column inside the value field
+
+  always_comb begin
+    m_ch    = 8'h20;
+    m_color = 4'd1;
+    m_p     = 3'( mr - 4'd2 );
+    m_val   = synth_params[{ m_p, 2'b00 } +: 4];
+    m_rel   = mc - 6'd12;
+    if ( menu_mode ) begin
+      if ( mr == 4'd0 ) begin
+        m_color = 4'd0;
+        if ( mc < 6'd32 ) m_ch = str_mem[{ S_MENU, mc[4:0] }];
+      end
+      else if ( mr >= 4'd2 && mr <= 4'd9 ) begin
+        if ( mc < 6'd11 ) begin
+          m_color = ( m_p == menu_sel ) ? 4'd0 : 4'd1;
+          m_ch    = str_mem[{ S_PNAME + 5'( m_p ), mc[4:0] }];
+        end
+        else if ( mc >= 6'd12 ) begin
+          if ( m_p == 3'd0 ) begin                                  // wave name
+            m_color = 4'd4;
+            if ( m_rel < 6'd16 ) m_ch = str_mem[{ S_WAVE + 5'( m_val[1:0] ), m_rel[4:0] }];
+          end
+          else if ( m_p == 3'd6 ) begin                             // octave -2..+2
+            m_color = 4'd4;
+            if ( m_rel == 6'd0 )      m_ch = ( m_val < 4'd2 ) ? "-" : ( m_val == 4'd2 ) ? " " : "+";
+            else if ( m_rel == 6'd1 ) m_ch = 8'h30 + 8'( ( m_val < 4'd2 ) ? 4'd2 - m_val : m_val - 4'd2 );
+          end
+          else begin                                                // bar + number
+            if ( m_rel < 6'd15 ) begin
+              m_ch    = ( m_rel < 6'( m_val ) ) ? 8'hDB : 8'hB0;
+              m_color = ( m_rel < 6'( m_val ) ) ? 4'd3 : 4'd2;
+            end
+            else if ( m_rel == 6'd16 ) begin m_ch = ( m_val >= 4'd10 ) ? "1" : " ";                     m_color = 4'd0; end
+            else if ( m_rel == 6'd17 ) begin m_ch = 8'h30 + 8'( ( m_val >= 4'd10 ) ? m_val - 4'd10 : m_val ); m_color = 4'd0; end
+          end
+        end
+      end
+      else if ( mr == 4'd11 ) begin
+        m_color = 4'd2;
+        if ( mc < 6'd32 ) m_ch = str_mem[{ S_HINT, mc[4:0] }];
+      end
+    end
+  end
+//____________________________________________________________________________//
+
 //------------- Job sequencer                                    -------------//
   always_ff @( posedge clk or negedge rst_n ) begin
     if ( !rst_n ) begin
       dirty    <= '1;                  // draw everything after reset
+      mr       <= '0;
+      mc       <= '0;
       job      <= J_NONE;
       i        <= '0;
       len      <= '0;
@@ -190,6 +260,20 @@ module screen_text_ctrl #(
         else if ( dirty[2] ) begin job <= J_L3;    len <= 6'd18; base <= 13'( 12 * 128 + 9 ); dirty[2] <= set_dirty[2]; end
         else if ( dirty[3] ) begin job <= J_L4;    len <= 6'd18; base <= 13'( 14 * 128 + 9 ); dirty[3] <= set_dirty[3]; end
         else if ( dirty[4] ) begin job <= J_L5;    len <= 6'd18; base <= 13'( 16 * 128 + 9 ); dirty[4] <= set_dirty[4]; end
+        else if ( dirty[5] ) begin job <= J_MENU;  mr <= '0; mc <= '0;                         dirty[5] <= set_dirty[5]; end
+      end
+      else if ( job == J_MENU ) begin
+        if ( !txt_full && !txt_we ) begin
+          txt_we   <= 1'b1;
+          txt_word <= { { 6'( mr ) + 6'd6, 7'd0 } + 13'd36 + 13'( mc ), m_color, m_ch };
+          if ( mc == 6'd51 ) begin
+            mc <= '0;
+            mr <= mr + 1'b1;
+            if ( mr == 4'd11 ) job <= J_NONE;
+          end
+          else
+            mc <= mc + 1'b1;
+        end
       end
       else if ( !txt_full && !txt_we ) begin
         txt_we   <= 1'b1;

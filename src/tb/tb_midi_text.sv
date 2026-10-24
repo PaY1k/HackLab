@@ -10,13 +10,17 @@ module tb_midi_text;
 
   logic       rx = 1;
   wire  [7:0] rx_byte;
-  wire        rx_valid, m_on, m_off, m_all, ok;
-  wire  [6:0] m_note;
+  wire        rx_valid, m_on, m_off, m_all, ok, set_v;
+  wire  [6:0] m_note, mod;
+  wire signed [13:0] bend;
+  wire  [2:0] set_i;
+  wire  [3:0] set_val;
 
   uart_rx #( .CLKS_PER_BIT ( 427 ) ) uart ( .clk ( clk ), .rst_n ( rst_n ), .rx ( rx ), .data ( rx_byte ), .valid ( rx_valid ) );
   midi_text_rx dut (
     .clk ( clk ), .rst_n ( rst_n ), .rx_data ( rx_byte ), .rx_valid ( rx_valid ),
-    .midi_on ( m_on ), .midi_off ( m_off ), .midi_note ( m_note ), .midi_all_off ( m_all ), .cmd_ok ( ok )
+    .midi_on ( m_on ), .midi_off ( m_off ), .midi_note ( m_note ), .midi_all_off ( m_all ),
+    .bend ( bend ), .mod_wheel ( mod ), .set_valid ( set_v ), .set_idx ( set_i ), .set_val ( set_val ), .cmd_ok ( ok )
   );
 
   // PC side: 115200 baud, 8N1
@@ -36,9 +40,11 @@ module tb_midi_text;
     if ( m_on )  got = { got, $sformatf( "on%0d ", m_note ) };
     if ( m_off ) got = { got, $sformatf( "off%0d ", m_note ) };
     if ( m_all ) got = { got, "all " };
+    if ( set_v ) got = { got, $sformatf( "set%0d=%0d ", set_i, set_val ) };
   end
 
-  string expected = "on60 off60 on64 off64 off67 on62 off62 all on72 all on48 all ";
+  string expected = { "on60 off60 on64 off64 off67 on62 off62 all on72 all on48 all ",
+                      "set1=7 set0=3 set6=3 set7=10 set4=15 set3=12 " };
 
   initial begin
     repeat ( 10 ) @( posedge clk );
@@ -57,8 +63,23 @@ module tb_midi_text;
     send_line( "hello world\n" );                                   // ignored
     send_line( "NoteOn 48 127;" );
     send_line( "STOP\n" );
-    send_line( "control_change channel=0 control=7 value=100\n" );  // volume CC: ignored
+    send_line( "control_change channel=0 control=11 value=100\n" ); // other CC: ignored
+    send_line( "SET ATTACK 7\n" );
+    send_line( "WAVE SAW\n" );
+    send_line( "SET 6 3\n" );
+    send_line( "CC 7 80\n" );                                      // MIDI volume 80 >> 3 = 10
+    send_line( "release 99\n" );                                   // clamped to 15
+    send_line( "sustain 12;" );
+    send_line( "BEND -4096\n" );
+    send_line( "CC 1 64\n" );
     #50_000;
+    $display( "bend=%0d mod=%0d", bend, mod );
+    if ( bend != -4096 || mod != 64 ) got = { got, "BAD-CTRL " };
+    send_line( "pitchwheel channel=0 pitch=1000 time=0\n" );
+    send_line( "control_change channel=0 control=1 value=10\n" );
+    #50_000;
+    $display( "bend=%0d mod=%0d", bend, mod );
+    if ( bend != 1000 || mod != 10 ) got = { got, "BAD-CTRL2 " };
     $display( "got:      %s", got );
     $display( "expected: %s", expected );
     if ( got == expected ) $display( "PASS" );

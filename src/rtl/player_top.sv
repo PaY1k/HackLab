@@ -10,7 +10,7 @@
 //   everything ──> screen_text_ctrl + player_screen ──> VGA
 //
 // Tracks: 0 synth, 1-2 melodies (BRAM), 3-4 WAV files from SD, 5 stream from PC.
-// Switches: SW[2:0] octave, SW[4:3] waveform, SW15 BTNL/BTNR play notes.
+// Switches: SW[2:0] octave, SW14 synth settings menu, SW15 BTNL/BTNR play notes.
 //
 // USB-UART from the PC, PC_TEXT_MIDI selects the protocol:
 //   1: text MIDI commands at 115200 baud ("ON 60 100", "OFF 60", mido str(msg)...),
@@ -24,6 +24,7 @@ module player_top #(
     parameter  MEL_FILE    = "melodies.mem",
     parameter  INFO_FILE   = "melody_info.mem",
     parameter  STR_FILE    = "strings.mem",
+    parameter  SPRITE_FILE = "sprite.mem",
     parameter  SPLASH_LOG2 = 27,
     parameter  SD_WAIT_BITS = 24,
     parameter  PC_TEXT_MIDI = 1,
@@ -77,7 +78,7 @@ module player_top #(
     sw_s2 <= sw_s1;
   end
   assign octave = sw_s2[2:0];
-  wire [1:0] wave_sel   = sw_s2[4:3];
+  wire       menu_mode  = sw_s2[14];
   wire       notes_mode = sw_s2[15];
 //____________________________________________________________________________//
 
@@ -93,6 +94,7 @@ module player_top #(
     .btn_l      ( btn_l      ),
     .btn_r      ( btn_r      ),
     .notes_mode ( notes_mode ),
+    .menu_mode  ( menu_mode  ),
     .gain_zero  ( gain_zero  ),
     .play       ( play       ),
     .volume     ( volume     ),
@@ -124,6 +126,27 @@ module player_top #(
   wire        pc_title_valid, pc_title_chg;
 
   wire        rx_activity, cmd_ok;
+  wire signed [13:0] bend;
+  wire [ 6:0] mod_wheel;
+  wire        set_valid;
+  wire [ 2:0] set_idx, menu_sel;
+  wire [ 3:0] set_val;
+  wire [31:0] synth_params;
+
+  synth_settings synth_settings (
+    .clk       ( aud_clk      ),
+    .rst_n     ( aud_rst_n    ),
+    .menu_mode ( menu_mode    ),
+    .btn_u     ( btn_u        ),
+    .btn_d     ( btn_d        ),
+    .btn_l     ( btn_l        ),
+    .btn_r     ( btn_r        ),
+    .set_valid ( set_valid    ),
+    .set_idx   ( set_idx      ),
+    .set_val   ( set_val      ),
+    .sel       ( menu_sel     ),
+    .params    ( synth_params )
+  );
 
   generate
     if ( PC_TEXT_MIDI ) begin : g_text_midi
@@ -143,6 +166,11 @@ module player_top #(
         .midi_off     ( midi_off     ),
         .midi_note    ( midi_note    ),
         .midi_all_off ( midi_all_off ),
+        .bend         ( bend         ),
+        .mod_wheel    ( mod_wheel    ),
+        .set_valid    ( set_valid    ),
+        .set_idx      ( set_idx      ),
+        .set_val      ( set_val      ),
         .cmd_ok       ( cmd_ok       )
       );
 
@@ -174,6 +202,11 @@ module player_top #(
       );
       assign rx_activity = !uart_rx;
       assign cmd_ok      = midi_on || midi_off || midi_all_off;
+      assign bend        = '0;
+      assign mod_wheel   = '0;
+      assign set_valid   = 1'b0;
+      assign set_idx     = '0;
+      assign set_val     = '0;
     end
   endgenerate
 
@@ -285,7 +318,9 @@ module player_top #(
     .switching    ( switching    ),
     .restart      ( restart      ),
     .synth_note   ( synth_note   ),
-    .wave_sel     ( wave_sel     ),
+    .synth_params ( synth_params ),
+    .bend         ( bend         ),
+    .mod_wheel    ( mod_wheel    ),
     .midi_on      ( midi_on      ),
     .midi_off     ( midi_off     ),
     .midi_note    ( midi_note    ),
@@ -352,6 +387,9 @@ module player_top #(
     .pc_title_char  ( pc_title_char  ),
     .pc_title_valid ( pc_title_valid ),
     .pc_title_chg   ( pc_title_chg   ),
+    .menu_mode      ( menu_mode      ),
+    .menu_sel       ( menu_sel       ),
+    .synth_params   ( synth_params   ),
     .txt_we         ( txt_we         ),
     .txt_word       ( txt_word       ),
     .txt_full       ( txt_full       )
@@ -360,6 +398,7 @@ module player_top #(
   player_screen #(
     .FONT_FILE   ( FONT_FILE   ),
     .TEXT_FILE   ( TEXT_FILE   ),
+    .SPRITE_FILE ( SPRITE_FILE ),
     .SPLASH_LOG2 ( SPLASH_LOG2 )
   ) player_screen (
     .aud_clk      ( aud_clk    ),
@@ -378,6 +417,9 @@ module player_top #(
     .txt_we       ( txt_we     ),
     .txt_word     ( txt_word   ),
     .txt_full     ( txt_full   ),
+    .menu_mode    ( menu_mode  ),
+    .menu_sel     ( menu_sel   ),
+    .dancing      ( play || ( |key_mask ) ),
     .pix_clk      ( pix_clk    ),
     .pix_rst_n    ( pix_rst_n  ),
     .vga_r        ( vga_r      ),

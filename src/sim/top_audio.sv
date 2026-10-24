@@ -16,8 +16,7 @@ module top_audio (
     input   logic            sw0          ,  // octave
     input   logic            sw1          ,
     input   logic            sw2          ,
-    input   logic            sw3          ,  // waveform
-    input   logic            sw4          ,
+    input   logic            sw14         ,  // synth settings menu
     input   logic            sw15         ,  // BTNL/BTNR play notes
   //----------- Audio                                            -------------//
     output  logic            aud_pwm      ,
@@ -50,6 +49,7 @@ module top_audio (
       .MEL_FILE    ( "../rtl/mem/melodies.mem"    ),
       .INFO_FILE   ( "../rtl/mem/melody_info.mem" ),
       .STR_FILE    ( "../rtl/mem/strings.mem"     ),
+      .SPRITE_FILE ( "../rtl/mem/sprite.mem"      ),
       .SPLASH_LOG2 ( 26                           )    // shorter splash: the sim is slower
     ) player (
       .aud_clk    ( clk           ),
@@ -61,7 +61,7 @@ module top_audio (
       .btn_d      ( button_d      ),
       .btn_l      ( button_l      ),
       .btn_r      ( button_r      ),
-      .sw         ( { sw15, 10'd0, sw4, sw3, sw2, sw1, sw0 } ),
+      .sw         ( { sw15, sw14, 11'd0, sw2, sw1, sw0 } ),
       .aud_pwm    ( aud_pwm       ),
       .uart_rx    ( 1'b1          ),
       /* verilator lint_off PINCONNECTEMPTY */

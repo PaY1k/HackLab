@@ -30,7 +30,9 @@ module audio_core #(
     input  wire          switching    ,   // fade out, a track change is waiting
     input  wire          restart      ,   // pulse: new track starts now
     input  wire  [ 6:0]  synth_note   ,   // MIDI note number of the manual synth
-    input  wire  [ 1:0]  wave_sel     ,
+    input  wire  [31:0]  synth_params ,   // synth_settings.sv
+    input  wire signed [13:0] bend   ,   // pitch bend -8192..8191
+    input  wire  [ 6:0]  mod_wheel    ,
   //--------- MIDI                               --------//
     input  wire          midi_on      ,
     input  wire          midi_off     ,
@@ -94,7 +96,10 @@ module audio_core #(
   assign gain_zero = ( gain == 16'd0 );
   wire   active    = !( gain_zero && target == 16'd0 );   // track sources advance
 
+  // MIDI level: master volume * "midi volume" setting (0..15)
   logic [15:0] midi_gain;
+  wire  [23:0] midi_t_full = vol_gain( volume ) * synth_params[31:28] * 8'd17;    // * mvol / 15
+  wire  [15:0] midi_target = midi_t_full[23:8];
   always_ff @( posedge clk or negedge rst_n ) begin
     if ( !rst_n ) begin
       gain      <= '0;
@@ -105,10 +110,10 @@ module audio_core #(
         gain <= ( target - gain > GSTEP ) ? gain + GSTEP : target;
       else if ( gain > target )
         gain <= ( gain - target > GSTEP ) ? gain - GSTEP : target;
-      if ( midi_gain < vol_gain( volume ) )
-        midi_gain <= ( vol_gain( volume ) - midi_gain > GSTEP ) ? midi_gain + GSTEP : vol_gain( volume );
-      else if ( midi_gain > vol_gain( volume ) )
-        midi_gain <= ( midi_gain - vol_gain( volume ) > GSTEP ) ? midi_gain - GSTEP : vol_gain( volume );
+      if ( midi_gain < midi_target )
+        midi_gain <= ( midi_target - midi_gain > GSTEP ) ? midi_gain + GSTEP : midi_target;
+      else if ( midi_gain > midi_target )
+        midi_gain <= ( midi_gain - midi_target > GSTEP ) ? midi_gain - GSTEP : midi_target;
     end
   end
 //____________________________________________________________________________//
@@ -148,7 +153,9 @@ module audio_core #(
     .clk          ( clk                                           ),
     .rst_n        ( rst_n                                         ),
     .tick         ( tick                                          ),
-    .wave_sel     ( wave_sel                                      ),
+    .params       ( synth_params                                  ),
+    .bend         ( bend                                          ),
+    .mod_wheel    ( mod_wheel                                     ),
     .v0_note      ( synth_note                                    ),
     .v0_gate      ( play && !switching && is_synth                ),
     .v1_note      ( mel_note                                      ),

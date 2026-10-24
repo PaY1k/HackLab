@@ -4,6 +4,8 @@
 //   BTNU / BTND volume up / down (0..15, start 10)
 //   BTNL / BTNR previous / next track (6 tracks, wraps around);
 //               with notes_mode = 1 (SW15) on track 0: previous / next note
+//   menu_mode = 1 (SW14): BTNU/BTND/BTNL/BTNR edit the synth settings
+//               (synth_settings.sv) and are ignored here
 //
 // A track change is done in two steps: `switching` fades the sound out,
 // when audio_core reports gain_zero the new track is applied and `restart`
@@ -20,6 +22,7 @@ module player_ctrl #(
     input  wire        btn_l      ,
     input  wire        btn_r      ,
     input  wire        notes_mode ,
+    input  wire        menu_mode  ,
     input  wire        gain_zero  ,
     output logic       play       ,
     output logic [3:0] volume     ,
@@ -47,10 +50,17 @@ module player_ctrl #(
 
       if ( btn_c ) play <= ~play;
 
-      if ( btn_u && volume != 4'd15 )      volume <= volume + 1'b1;
-      else if ( btn_d && volume != 4'd0 )  volume <= volume - 1'b1;
+      if ( !menu_mode && btn_u && volume != 4'd15 )      volume <= volume + 1'b1;
+      else if ( !menu_mode && btn_d && volume != 4'd0 )  volume <= volume - 1'b1;
 
-      if ( note_keys ) begin
+      if ( menu_mode ) begin
+        if ( switching && gain_zero ) begin              // finish a change started before
+          track     <= next_track;
+          switching <= 1'b0;
+          restart   <= 1'b1;
+        end
+      end
+      else if ( note_keys ) begin
         if ( btn_r )      note_index <= ( note_index == 3'd6 ) ? 3'd0 : note_index + 1'b1;
         else if ( btn_l ) note_index <= ( note_index == 3'd0 ) ? 3'd6 : note_index - 1'b1;
       end

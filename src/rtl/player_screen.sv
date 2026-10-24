@@ -12,6 +12,7 @@
 module player_screen #(
     parameter  FONT_FILE   = "font8x16.mem",
     parameter  TEXT_FILE   = "screen_text.mem",
+    parameter  SPRITE_FILE = "sprite.mem",
     parameter  SPLASH_LOG2 = 27
 )(
   //--------- Audio domain                       --------//
@@ -31,6 +32,9 @@ module player_screen #(
     input  wire          txt_we       ,   // text cell write
     input  wire  [24:0]  txt_word     ,
     output wire          txt_full     ,
+    input  wire          menu_mode    ,   // synth settings menu (SW14)
+    input  wire  [ 2:0]  menu_sel     ,
+    input  wire          dancing      ,   // music is playing: the mascot dances
   //--------- Pixel domain                       --------//
     input  wire          pix_clk      ,
     input  wire          pix_rst_n    ,
@@ -81,10 +85,10 @@ module player_screen #(
 //____________________________________________________________________________//
 
 //------------- Status -> pixel domain                           -------------//
-  localparam SW = 1 + 4 + 16 + 16 + 1 + 10 + 3 + 36;
+  localparam SW = 1 + 4 + 16 + 16 + 1 + 10 + 3 + 36 + 1 + 3 + 1;
 
   wire  [SW-1:0] status_aud = { play, volume, time_bcd, len_bcd, len_valid,
-                                progress_aud, track_idx, key_mask };
+                                progress_aud, track_idx, key_mask, menu_mode, menu_sel, dancing };
   wire  [SW-1:0] status_pix;
 
   cdc_bus #( .WIDTH ( SW ) ) status_cdc (
@@ -103,7 +107,10 @@ module player_screen #(
   wire         p_len_valid;
   wire [ 9:0]  p_progress;
   wire [35:0]  p_keys;
-  assign { p_play, p_volume, p_time, p_len, p_len_valid, p_progress, p_track, p_keys } = status_pix;
+  wire         p_menu, p_dance;
+  wire [ 2:0]  p_sel;
+  assign { p_play, p_volume, p_time, p_len, p_len_valid, p_progress, p_track, p_keys,
+           p_menu, p_sel, p_dance } = status_pix;
 
   // Text writes -> pixel domain
   wire        txt_empty;
@@ -153,6 +160,7 @@ module player_screen #(
   vga_ui #(
     .FONT_FILE   ( FONT_FILE   ),
     .TEXT_FILE   ( TEXT_FILE   ),
+    .SPRITE_FILE ( SPRITE_FILE ),
     .SPLASH_LOG2 ( SPLASH_LOG2 )
   ) vga_ui (
     .pixel_clk   ( pix_clk     ),
@@ -170,6 +178,9 @@ module player_screen #(
     .progress    ( p_progress  ),
     .track_idx   ( p_track     ),
     .key_mask    ( p_keys      ),
+    .menu_mode   ( p_menu      ),
+    .menu_sel    ( p_sel       ),
+    .dancing     ( p_dance     ),
     .scope_addr  ( scope_addr  ),
     .scope_data  ( scope_data  ),
     .frame_start ( frame_start ),

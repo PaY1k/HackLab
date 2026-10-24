@@ -7,7 +7,7 @@
                    duration in units of 5 ms, midi 0 = rest, word 0 = end
   melody_info.mem  per melody 4 words: start address, total units,
                    length mm:ss (BCD), 1024*65536/total (for the progress bar)
-  strings.mem      CP866 text slots for the screen, 32 bytes each
+  strings.mem      CP866 text slots for the screen, 32 x 32 bytes
 
 Sample rate: 49.15865 MHz / 1024 = 48006.5 Hz.
 
@@ -80,6 +80,20 @@ STRINGS = [
     "ПК / UART",                 # 9
     "SD: читаю карту...",        # 10
     "SD: ошибка формата",        # 11
+    "СИНТЕЗАТОР ДЛЯ MIDI",       # 12 menu title
+    "Волна",                     # 13 menu items (synth_settings.sv order)
+    "Атака",                     # 14
+    "Спад",                      # 15
+    "Сустейн",                   # 16
+    "Затухание",                 # 17
+    "Вибрато",                   # 18
+    "Октава",                    # 19
+    "Громкость",                 # 20
+    "СИНУС",                     # 21 wave names
+    "ТРЕУГОЛЬНИК",               # 22
+    "МЕАНДР",                    # 23
+    "ПИЛА",                      # 24
+    "BTNU/D выбор  BTNL/R знач.",  # 25 menu hint
 ]
 
 
@@ -128,7 +142,8 @@ def main():
         b = s.encode("cp866")
         assert len(b) <= 32, s
         data += list(b) + [0x20] * (32 - len(b))
-    write("strings.mem", data + [0x20] * (512 - len(data)), 2)
+    assert len(data) <= 1024
+    write("strings.mem", data + [0x20] * (1024 - len(data)), 2)
 
 
 if __name__ == "__main__":

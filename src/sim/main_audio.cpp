@@ -164,8 +164,7 @@ int main(int argc, char** argv) {
   top->sw0 = 0;
   top->sw1 = 0;
   top->sw2 = 0;
-  top->sw3 = 0;
-  top->sw4 = 0;
+  top->sw14 = 0;
   top->sw15 = 0;
 
   // main loop
@@ -177,8 +176,8 @@ int main(int argc, char** argv) {
 
   bool prev_oct[8] = {false};
   bool prev_n = false;      // 'N': SW15, arrows play notes on track 1
-  bool prev_w = false;      // 'W': SW[4:3], next waveform
-  int  wave   = 0;
+  bool prev_m = false;      // 'M': SW14, synth settings menu
+  bool menu   = false;
   bool notes  = false;
 
   int pwm_high  = 0;      // 
@@ -257,9 +256,8 @@ int main(int argc, char** argv) {
       top->sw1 = (cur_oct >> 1) & 1;
       top->sw2 = (cur_oct >> 2) & 1;
       if (pressed(keyb_state[SDL_SCANCODE_N], prev_n)) notes = !notes;
-      if (pressed(keyb_state[SDL_SCANCODE_W], prev_w)) wave  = (wave + 1) & 3;
-      top->sw3  = (wave >> 0) & 1;
-      top->sw4  = (wave >> 1) & 1;
+      if (pressed(keyb_state[SDL_SCANCODE_M], prev_m)) menu  = !menu;
+      top->sw14 = menu ? 1 : 0;
       top->sw15 = notes ? 1 : 0;
 
       if (pressed(keyb_state[SDL_SCANCODE_V], prev_v)) vga_on   = !vga_on;

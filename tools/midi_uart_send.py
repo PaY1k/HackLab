@@ -3,6 +3,7 @@
 (src/rtl/midi_text_rx.sv, UART 115200 8N1, one command per line):
 
     ON <note> <velocity>\\n     OFF <note>\\n     OFF\\n (all notes off)
+    BEND <-8192..8191>       CC <control> <value>     SET <name> <value>
 
 The board also understands str(msg) from mido ("note_on channel=0 note=60
 velocity=100 time=0") and bare "60 100" / "60 0", so your own program may
@@ -15,6 +16,11 @@ Works on Windows, Linux, macOS:
     python midi_uart_send.py --port COM5 --scale        # play a scale, no keyboard needed
     python midi_uart_send.py --port COM5 --midi auto    # MIDI keyboard -> board
     python midi_uart_send.py --port COM5 --line "ON 60 100"
+    python midi_uart_send.py --port COM5 --set "WAVE SAW" --set "ATTACK 6" --set "RELEASE 12"
+
+Synth settings (also on the board: SW14 + buttons): WAVE SINE/TRI/SQUARE/SAW,
+ATTACK, DECAY, SUSTAIN, RELEASE, VIBRATO 0..15, OCTAVE 0..4 (2 = normal), MVOL 0..15.
+The keyboard's pitch bend and mod wheel (vibrato) are forwarded too.
 
 On Windows the board is "USB Serial Port (COMx)" in Device Manager.
 """
@@ -43,6 +49,8 @@ def main():
     ap.add_argument("--scale", action="store_true", help="play C major scale and a chord")
     ap.add_argument("--midi", metavar="NAME", help="MIDI input name or 'auto'")
     ap.add_argument("--line", help="send one line as is")
+    ap.add_argument("--set", action="append", default=[], metavar="'NAME VALUE'",
+                    help="synth setting, e.g. --set 'WAVE SAW' --set 'ATTACK 6' (repeat)")
     args = ap.parse_args()
 
     if args.list:
@@ -63,6 +71,9 @@ def main():
     try:
         if args.line:
             send(ser, args.line)
+        for item in args.set:
+            send(ser, f"SET {item}")
+            time.sleep(0.01)
         if args.scale:
             for n in (60, 62, 64, 65, 67, 69, 71, 72):
                 send(ser, f"ON {n} 100")
@@ -85,8 +96,10 @@ def main():
                         send(ser, f"ON {msg.note} {msg.velocity}")
                     elif msg.type in ("note_on", "note_off"):
                         send(ser, f"OFF {msg.note}")
-                    elif msg.type == "control_change" and msg.control in (120, 123):
-                        send(ser, "OFF")
+                    elif msg.type == "pitchwheel":
+                        send(ser, f"BEND {msg.pitch}")
+                    elif msg.type == "control_change":
+                        send(ser, f"CC {msg.control} {msg.value}")
     except KeyboardInterrupt:
         pass
     finally:

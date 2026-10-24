@@ -33,7 +33,7 @@ module tb_audio_core;
   audio_core #( .PWM_BITS ( 7 ) ) core (
     .clk ( clk ), .rst_n ( rst_n ),
     .play ( play ), .volume ( volume ), .track ( track ), .switching ( switching ), .restart ( restart ),
-    .synth_note ( 7'd69 ), .wave_sel ( 2'd0 ),
+    .synth_note ( 7'd69 ), .synth_params ( 32'hF206B510 ), .bend ( 14'sd0 ), .mod_wheel ( 7'd0 ),
     .midi_on ( 1'b0 ), .midi_off ( 1'b0 ), .midi_note ( 7'd0 ), .midi_all_off ( 1'b0 ),
     .sd_empty ( 1'b1 ), .sd_data ( 16'd0 ), .sd_step ( 16'd65527 ), .sd_rd ( ),
     .pc_empty ( 1'b1 ), .pc_data ( 16'd0 ), .pc_rd ( ),

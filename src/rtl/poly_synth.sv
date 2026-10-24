@@ -1,17 +1,17 @@
 // Polyphonic DDS synthesizer, 10 voices, time-multiplexed.
 //
 //   voice 0      : manual synth (buttons / switches), v0_note + v0_gate
-//   voice 1      : melody player, v1_note + v1_gate
+//   voice 1      : melody player, v1_note + v1_gate (fixed sound: sine, short envelope)
 //   voices 2..9  : MIDI keyboard, midi_on / midi_off events
 //
-// Once per sample tick the voices are processed one after another (5 clocks
-// each, 50 of the 1024 clocks between ticks), so one sine ROM and one
+// Once per sample tick the voices are processed one after another (6 clocks
+// each, ~60 of the 1024 clocks between ticks), so one sine ROM and one
 // multiplier serve all of them.
 //
-// Each voice: 32-bit phase accumulator (increment from note_inc.mem by MIDI
-// note number), waveform (sine / triangle / square / saw), ADSR envelope.
-// The envelope makes every start and stop smooth: no clicks on pause or note
-// change.
+// Voices 0 and 2..9 use the settings (synth_settings.sv): waveform, ADSR
+// times, sustain level, vibrato depth (+ mod wheel), MIDI octave shift; pitch
+// bend moves them up to +-2 semitones. Each voice: 32-bit phase accumulator,
+// increment from note_inc.mem by MIDI note number, 24-bit envelope.
 module poly_synth #(
     parameter  SINE_FILE = "sine1024.mem",
     parameter  NOTE_FILE = "note_inc.mem",
@@ -20,7 +20,10 @@ module poly_synth #(
     input  wire                clk          ,
     input  wire                rst_n        ,
     input  wire                tick         ,   // one pulse per sample
-    input  wire        [ 1:0]  wave_sel     ,   // 0 sine, 1 triangle, 2 square, 3 saw
+  //--------- Settings                          --------//
+    input  wire        [31:0]  params       ,   // synth_settings.sv
+    input  wire signed [13:0]  bend         ,   // -8192..8191 = -2..+2 semitones
+    input  wire        [ 6:0]  mod_wheel    ,   // 0..127, adds vibrato
   //--------- Voice 0: manual                   --------//
     input  wire        [ 6:0]  v0_note      ,
     input  wire                v0_gate      ,
@@ -38,16 +41,19 @@ module poly_synth #(
     output logic       [35:0]  key_mask         // sounding notes C3 (48) .. B5 (83)
 );
 
-  localparam [16:0] ATT = 17'd512;     // attack  ~2.7 ms
-  localparam [15:0] DEC = 16'd16;      // decay   ~27 ms
-  localparam [15:0] SUS = 16'd45000;   // sustain ~0.69
-  localparam [15:0] REL = 16'd12;      // release ~80 ms
+  wire [1:0] p_wave = params[1:0];
+  wire [3:0] p_att  = params[7:4];
+  wire [3:0] p_dec  = params[11:8];
+  wire [3:0] p_sus  = params[15:12];
+  wire [3:0] p_rel  = params[19:16];
+  wire [3:0] p_vib  = params[23:20];
+  wire [2:0] p_oct  = params[26:24];
 
   typedef enum logic [2:0] { OFF, ATTACK, DECAY, SUSTAIN, RELEASE } stage_t;
 
   logic [31:0] phase [0:NV-1];
   logic [ 6:0] note  [0:NV-1];
-  logic [15:0] env   [0:NV-1];
+  logic [23:0] env   [0:NV-1];         // 16.8 fixed point
   stage_t      stage [0:NV-1];
 
 //------------- ROMs                                             -------------//
@@ -85,13 +91,43 @@ module poly_synth #(
     else if ( x < -20'sd32768 )  sat16 = -16'sd32768;
     else                         sat16 = x[15:0];
   endfunction
+
+  // envelope step per tick for a full swing in 0, 2, 5, 10, 20, 40, 70, 100,
+  // 150, 200, 300, 450, 600, 800, 1200, 2000 ms (16.8 fixed point)
+  function automatic [23:0] rate (input [3:0] t);
+    case ( t )
+      4'd0:  rate = 24'd16777215;  4'd1:  rate = 24'd174736;  4'd2:  rate = 24'd69895;
+      4'd3:  rate = 24'd34947;     4'd4:  rate = 24'd17474;   4'd5:  rate = 24'd8737;
+      4'd6:  rate = 24'd4992;      4'd7:  rate = 24'd3495;    4'd8:  rate = 24'd2330;
+      4'd9:  rate = 24'd1747;      4'd10: rate = 24'd1165;    4'd11: rate = 24'd777;
+      4'd12: rate = 24'd582;       4'd13: rate = 24'd437;     4'd14: rate = 24'd291;
+      default: rate = 24'd175;
+    endcase
+  endfunction
+//____________________________________________________________________________//
+
+//------------- Vibrato LFO, 5.5 Hz triangle                     -------------//
+  logic [31:0] lfo;
+  always_ff @( posedge clk or negedge rst_n ) begin
+    if ( !rst_n )   lfo <= '0;
+    else if ( tick ) lfo <= lfo + 32'd492062;          // 5.5 Hz * 2^32 / 48006.5
+  end
+  wire [9:0]         lfo_t   = lfo[31] ? ~lfo[30:21] : lfo[30:21];   // 0..1023..0
+  wire [5:0]         depth   = { 2'b0, p_vib } + { 2'b0, mod_wheel[6:3] } + ( mod_wheel[6:3] != 0 ? 6'd2 : 6'd0 );
+  // pitch factor: +-8192 = +-12.5 % (about 2 semitones), vibrato up to ~+-0.5 semitone
+  wire signed [16:0] vib     = ( $signed( { 1'b0, lfo_t } ) - 17'sd512 ) * $signed( { 1'b0, depth } ) >>> 3;
+  wire signed [16:0] pfactor = 17'( bend ) + vib;
 //____________________________________________________________________________//
 
 //------------- MIDI event latch                                 -------------//
-  // Events come much slower than ticks (one UART packet ~65 us), one slot is enough.
+  // Events come much slower than ticks (one UART line > 0.3 ms), one slot is enough.
   logic       pend_on, pend_off, pend_all;
   logic [6:0] pend_note;
-  logic       ev_take;                       // set by the FSM when events are applied
+
+  // MIDI octave shift, clamped to 0..127
+  wire  [7:0] shifted  = { 1'b0, pend_note } + 8'd12 * { 5'd0, p_oct } - 8'd24;
+  wire  [6:0] on_note  = ( { 1'b0, pend_note } + 8'd12 * { 5'd0, p_oct } < 8'd24 ) ? 7'd0
+                       : ( shifted > 8'd127 ) ? 7'd127 : shifted[6:0];
 
 //------------- Free voice search (MIDI voices only)            -------------//
   logic [3:0] free_v;
@@ -118,6 +154,18 @@ module poly_synth #(
   logic signed [15:0] wave_r;
   logic signed [32:0] prod;
   logic signed [19:0] acc_track, acc_midi;
+
+  // settings of the current voice: the melody voice keeps a fixed sound
+  wire        fixed = ( v == 4'd1 );
+  wire [1:0]  v_wave = fixed ? 2'd0 : p_wave;
+  wire [23:0] v_att  = rate( fixed ? 4'd1 : p_att );
+  wire [23:0] v_dec  = rate( fixed ? 4'd5 : p_dec );
+  wire [23:0] v_rel  = rate( fixed ? 4'd6 : p_rel );
+  wire [23:0] v_sus  = { ( fixed ? 4'd11 : p_sus ) * 16'd4369, 8'd0 };
+
+  // increment with bend and vibrato: inc + inc * pfactor / 65536
+  wire signed [49:0] inc_mod = $signed( { 1'b0, inc_q } ) * pfactor;
+  wire        [31:0] inc_bent = inc_q + 32'( inc_mod >>> 16 );
 
   always_ff @( posedge clk or negedge rst_n ) begin
     if ( !rst_n ) begin
@@ -179,11 +227,11 @@ module poly_synth #(
           end
           else if ( pend_on && !midi_on ) begin
             if ( free_found ) begin
-              note[free_v]  <= pend_note;
+              note[free_v]  <= on_note;
               stage[free_v] <= ATTACK;
             end
             else begin
-              note[steal_v]  <= pend_note;
+              note[steal_v]  <= on_note;
               stage[steal_v] <= ATTACK;
               steal_v <= ( steal_v == 4'( NV-1 ) ) ? 4'd2 : steal_v + 1'b1;
             end
@@ -191,7 +239,7 @@ module poly_synth #(
           end
           else if ( pend_off && !midi_off ) begin
             for ( int i = 2; i < NV; i++ )
-              if ( note[i] == pend_note && stage[i] != OFF && stage[i] != RELEASE )
+              if ( note[i] == on_note && stage[i] != OFF && stage[i] != RELEASE )
                 stage[i] <= RELEASE;
             pend_off <= 1'b0;
           end
@@ -208,31 +256,32 @@ module poly_synth #(
           st        <= S_SINE;
         end
 
+        // increment with pitch bend and vibrato (not for the melody voice)
         S_SINE: begin
-          inc_r <= inc_q;
+          inc_r <= fixed ? inc_q : inc_bent;
           st    <= S_MUL;
         end
 
         // sine_q is valid now
         S_MUL: begin
-          wave_r   <= shape( wave_sel, phase[v], sine_q );
+          wave_r   <= shape( v_wave, phase[v], sine_q );
           phase[v] <= phase[v] + inc_r;
           // envelope step
           case ( stage[v] )
-            ATTACK:  if ( 17'( env[v] ) + ATT >= 17'h0FFFF ) begin env[v] <= 16'hFFFF; stage[v] <= DECAY; end
-                     else env[v] <= env[v] + ATT[15:0];
-            DECAY:   if ( env[v] <= SUS + DEC ) begin env[v] <= SUS; stage[v] <= SUSTAIN; end
-                     else env[v] <= env[v] - DEC;
-            SUSTAIN: env[v] <= SUS;
-            RELEASE: if ( env[v] <= REL ) begin env[v] <= '0; stage[v] <= OFF; end
-                     else env[v] <= env[v] - REL;
+            ATTACK:  if ( 25'( env[v] ) + 25'( v_att ) >= 25'h0FFFFFF ) begin env[v] <= 24'hFFFFFF; stage[v] <= DECAY; end
+                     else env[v] <= env[v] + v_att;
+            DECAY:   if ( 25'( env[v] ) <= 25'( v_sus ) + 25'( v_dec ) ) begin env[v] <= v_sus; stage[v] <= SUSTAIN; end
+                     else env[v] <= env[v] - v_dec;
+            SUSTAIN: env[v] <= v_sus;
+            RELEASE: if ( env[v] <= v_rel ) begin env[v] <= '0; stage[v] <= OFF; end
+                     else env[v] <= env[v] - v_rel;
             default: env[v] <= '0;
           endcase
           st <= S_ACC;
         end
 
         S_ACC: begin
-          prod <= wave_r * $signed( { 1'b0, env[v] } );
+          prod <= wave_r * $signed( { 1'b0, env[v][23:8] } );
           st   <= S_DONE;
         end
 

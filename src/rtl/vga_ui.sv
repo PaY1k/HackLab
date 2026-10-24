@@ -4,7 +4,9 @@
 //   splash (logo + loading bar, first ~3.4 s after reset)
 //   text      : 100x37 cells of 8x16 font, CP866 (Russian), screen_text.mem
 //   big time  : mm:ss, font scaled x4
+//   mascot    : dancing pixel-art girl (sprite.mem, tools/gen_sprite.py), x3
 //   scope     : 512 samples with trigger, glow around the line
+//               (in menu mode: hidden, the synth settings text is shown there)
 //   progress bar + knob, play / prev / next buttons, volume bars
 //   piano     : 3 octaves, keys from key_mask light up
 //   playlist  : highlight of the current track + animated mini equalizer
@@ -25,6 +27,7 @@
 module vga_ui #(
     parameter  FONT_FILE   = "font8x16.mem",
     parameter  TEXT_FILE   = "screen_text.mem",
+    parameter  SPRITE_FILE = "sprite.mem",
     parameter  SPLASH_LOG2 = 27                  // splash 2^27 / 39.941 MHz = 3.4 s
 )(
   //--------- Clock & Reset                      --------//
@@ -45,6 +48,9 @@ module vga_ui #(
     input  wire  [ 9:0]   progress    ,   // 0..1023 = position in the track
     input  wire  [ 2:0]   track_idx   ,   // highlighted playlist row 0..5
     input  wire  [35:0]   key_mask    ,   // piano keys to light, bit = octave*12 + semitone
+    input  wire           menu_mode   ,   // synth settings instead of the scope
+    input  wire  [ 2:0]   menu_sel    ,   // highlighted menu row
+    input  wire           dancing     ,   // the mascot dances
   //--------- Oscilloscope buffer                --------//
     output wire  [ 8:0]   scope_addr  ,
     input  wire  [ 7:0]   scope_data  ,   // 1 clock latency, 128 = silence
@@ -305,6 +311,43 @@ module vga_ui #(
   );
 //____________________________________________________________________________//
 
+//------------- Mascot sprite: 24x32, x3, at x 704..775, y 240..335 ---------//
+  localparam SPR_X0 = 11'd704, SPR_Y0 = 10'd240;
+  logic [3:0] spr_mem [0:3839];                 // 5 frames x 768, 4-bit palette index
+  initial $readmemh( SPRITE_FILE, spr_mem );
+
+  // frame: dance 2-3-4-3 (~8 steps per second), idle 0 with a blink every ~4 s
+  logic [2:0] spr_frame;
+  always_comb begin
+    if ( dancing )
+      case ( frame_cnt[4:3] )
+        2'd0: spr_frame = 3'd2;   2'd1: spr_frame = 3'd3;
+        2'd2: spr_frame = 3'd4;   default: spr_frame = 3'd3;
+      endcase
+    else
+      spr_frame = ( frame_cnt[7:3] == 5'd0 ) ? 3'd1 : 3'd0;
+  end
+
+  // divide by 3 with a multiplication: x * 43 >> 7 is exact for x < 128
+  wire [10:0] spr_dx1 = h1 - SPR_X0;
+  wire [ 9:0] spr_dy1 = v1 - SPR_Y0;
+  wire [ 4:0] spr_x1  = 5'( ( { 6'd0, spr_dx1[6:0] } * 13'd43 ) >> 7 );
+  wire [ 4:0] spr_y1  = 5'( ( { 6'd0, spr_dy1[6:0] } * 13'd43 ) >> 7 );
+  logic [3:0] spr_q2;                           // stage 2
+  always_ff @( posedge pixel_clk )
+    spr_q2 <= spr_mem[ 12'( spr_frame ) * 12'd768 + { 2'b0, spr_y1, 4'b0 } + { 3'b0, spr_y1, 3'b0 } + { 7'd0, spr_x1 } ];
+
+  function automatic [23:0] spr_pal (input [3:0] i);
+    case ( i )
+      4'd1:  spr_pal = rgb(  4,  8,  8 );   4'd2:  spr_pal = rgb( 62, 52, 44 );   4'd3:  spr_pal = rgb( 52, 40, 34 );
+      4'd4:  spr_pal = rgb(  8, 44, 22 );   4'd5:  spr_pal = rgb( 22, 60, 36 );   4'd6:  spr_pal = rgb(  6, 36, 18 );
+      4'd7:  spr_pal = rgb( 14, 50, 28 );   4'd8:  spr_pal = rgb( 60, 62, 62 );   4'd9:  spr_pal = rgb(  8, 12, 24 );
+      4'd10: spr_pal = rgb( 24, 56, 63 );   4'd11: spr_pal = rgb( 63, 38, 42 );   4'd12: spr_pal = rgb( 44, 14, 18 );
+      4'd13: spr_pal = rgb( 10, 12, 18 );   4'd14: spr_pal = rgb( 62, 56, 12 );   default: spr_pal = rgb( 10, 40, 62 );
+    endcase
+  endfunction
+//____________________________________________________________________________//
+
 //------------- Stage 1: geometry (status is static within a frame) -----------//
   // Everything here depends only on coordinates and slow status signals,
   // it is computed one stage early and registered to keep stage 2 short.
@@ -321,6 +364,7 @@ module vga_ui #(
     logic        btn_circle, btn_glow, btn_icon, side_icon;
     logic        big;
     logic        logo_area, splash_bar, splash_fill;
+    logic        spr_area, menu_hl;
   } geo_t;
 
   geo_t g1, g2;
@@ -456,6 +500,11 @@ module vga_ui #(
 
     g1.big = big_px1;
 
+    // mascot area and the highlighted menu row (rows 8..15 of the text grid)
+    g1.spr_area = ( h1 >= SPR_X0 ) && ( h1 < SPR_X0 + 11'd72 ) && ( v1 >= SPR_Y0 ) && ( v1 < SPR_Y0 + 10'd96 );
+    g1.menu_hl  = menu_mode && ( h1 >= 11'd284 ) && ( h1 < 11'd560 ) &&
+                  ( v1[9:4] == 6'd8 + 6'( menu_sel ) );
+
     // splash: logo 128x128 in the center, loading bar below
     g1.logo_area   = ( h1 >= LOGO_X0 ) && ( h1 < LOGO_X0 + 11'd128 ) && ( v1 >= LOGO_Y0 ) && ( v1 < LOGO_Y0 + 10'd128 );
     g1.splash_bar  = ( h1 >= LOGO_X0 ) && ( h1 < LOGO_X0 + 11'd128 ) && ( v1 >= 10'd392 ) && ( v1 < 10'd396 );
@@ -496,8 +545,12 @@ module vga_ui #(
     end
     else if ( text_px2 )
       c2 = ( g2.item[1] && attr2 == 4'd1 ) ? palette( 4'd0 ) : palette( attr2 );   // active row is white
+    else if ( g2.spr_area && spr_q2 != 4'd0 )
+      c2 = spr_pal( spr_q2 );
     else if ( g2.big )
       c2 = rgb( big_r, 62, 63 );
+    else if ( g2.scope_area && menu_mode )
+      c2 = g2.menu_hl ? rgb( 8, 24, 18 ) : rgb( 5, 7, 16 );
     else if ( g2.scope_area && sc_d == 10'd0 )
       c2 = rgb( 28, 63, 54 );
     else if ( g2.scope_area && sc_d == 10'd1 )

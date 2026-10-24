@@ -16,6 +16,7 @@ Cells written at run time (do not put static text there):
     row 1,  col 72..83  source              (СИНТЕЗ, BRAM, SD-КАРТА, ПК / UART)
     row 30, col 4..43   current track title
     rows 12, 14, 16, col 9..26  SD files, PC stream title
+    rows 6..17, col 36..87      synth menu (SW14)
 
 Usage:  python3 tools/gen_screen.py
 """
@@ -45,7 +46,7 @@ TEXT = [
     (16, 5, "06", GREY),
     (18, 4, LEFT + " " + RIGHT + " BTNL/BTNR  трек", DIM),
     (19, 4, "SW15 ноты на " + LEFT + " " + RIGHT, DIM),
-    (20, 4, "SW2:0 окт.  SW4:3 волна", DIM),
+    (20, 4, "SW2:0 окт.  SW14 меню", DIM),
     # scope panel
     (4, 35, "ОСЦИЛЛОГРАФ", GREY),
     (4, 82, "48 кГц · ШИМ", DIM),
