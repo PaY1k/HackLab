@@ -38,7 +38,9 @@ module poly_synth #(
   //--------- Output                            --------//
     output logic signed [15:0] track_out    ,   // voices 0 + 1
     output logic signed [15:0] midi_out     ,   // MIDI voices, mixed with headroom
-    output logic       [35:0]  key_mask         // sounding notes C3 (48) .. B5 (83)
+    output logic       [35:0]  key_mask     ,   // sounding notes C3 (48) .. B5 (83)
+    output logic       [ 6:0]  last_note    ,   // the most recently started note (any voice)
+    output logic               sounding         // some key is held / some note is playing
 );
 
   wire [1:0] p_wave = params[1:0];
@@ -179,6 +181,7 @@ module poly_synth #(
       pend_off  <= 1'b0;
       pend_all  <= 1'b0;
       pend_note <= '0;
+      last_note <= 7'd60;
       track_out <= '0;
       midi_out  <= '0;
       acc_track <= '0;
@@ -208,12 +211,16 @@ module poly_synth #(
         S_EVENTS: begin
           // voice 0: manual
           note[0] <= v0_note;
+          if ( v0_gate && ( !g0_prev || v0_note != note[0] ) ) last_note <= v0_note;
           if ( v0_gate && !g0_prev )       stage[0] <= ATTACK;
           else if ( !v0_gate && g0_prev )  stage[0] <= RELEASE;
           g0_prev <= v0_gate;
           // voice 1: melody, every new note is attacked again
           if ( v1_note != 7'd0 ) note[1] <= v1_note;
-          if ( v1_gate && ( !g1_prev || v1_note != n1_prev ) )  stage[1] <= ATTACK;
+          if ( v1_gate && ( !g1_prev || v1_note != n1_prev ) ) begin
+            stage[1]  <= ATTACK;
+            last_note <= v1_note;
+          end
           else if ( !v1_gate && g1_prev )                      stage[1] <= RELEASE;
           g1_prev <= v1_gate;
           n1_prev <= v1_note;
@@ -226,6 +233,7 @@ module poly_synth #(
             pend_off <= 1'b0;
           end
           else if ( pend_on && !midi_on ) begin
+            last_note <= on_note;
             if ( free_found ) begin
               note[free_v]  <= on_note;
               stage[free_v] <= ATTACK;
@@ -311,6 +319,13 @@ module poly_synth #(
 //____________________________________________________________________________//
 
 //------------- Piano keys                                       -------------//
+  always_comb begin
+    sounding = 1'b0;
+    for ( int i = 0; i < NV; i++ )
+      if ( stage[i] == ATTACK || stage[i] == DECAY || stage[i] == SUSTAIN )
+        sounding = 1'b1;
+  end
+
   always_comb begin
     key_mask = '0;
     for ( int i = 0; i < NV; i++ )

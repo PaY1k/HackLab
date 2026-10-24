@@ -40,6 +40,8 @@ module top_audio (
 );
 
     wire  [ 2:0]  octave;
+    wire  [ 6:0]  last_note;
+    wire          sounding;
 
     player_top #(
       .FONT_FILE   ( "../rtl/mem/font8x16.mem"    ),   // the sim runs from src/sim
@@ -86,8 +88,10 @@ module top_audio (
       .track      ( track         ),
       .octave     ( octave        ),
       /* verilator lint_off PINCONNECTEMPTY */
-      .leds       (               )
+      .leds       (               ),
       /* verilator lint_on PINCONNECTEMPTY */
+      .last_note  ( last_note     ),
+      .sounding   ( sounding      )
     );
 
     assign aud_en = 1'b1;
@@ -96,7 +100,6 @@ module top_audio (
     // the board divides clk_5mhz0d by 2^13 (610 Hz); the sim has no 5 MHz clock,
     // so clk is divided by 2^16: 49.16 MHz / 2^16 = 750 Hz
     reg   [15:0]  digital_clock_divider;
-    logic [ 3:0]  note_hex;
 
     always_ff @( posedge clk ) begin
       if ( sim_rst )
@@ -105,25 +108,16 @@ module top_audio (
         digital_clock_divider <= digital_clock_divider + 1;
     end
 
-    always_comb begin
-      case ( note_index )
-        3'd0:    note_hex = 'hc;
-        3'd1:    note_hex = 'hd;
-        3'd2:    note_hex = 'he;
-        3'd3:    note_hex = 'hf;
-        3'd4:    note_hex = 'h6;
-        3'd5:    note_hex = 'ha;
-        default: note_hex = 'hb;
-      endcase
-    end
-
-    sevseg_ctrl seven_segments_controller (
-      .clk                    ( digital_clock_divider [15]   ),
-      .arst_n                 ( ~sim_rst                     ),
-      .sevseg_32bit_hex_val   ( { 16'h0, 4'( track ) + 4'd1, volume, note_hex, 4'( octave ) + 4'd1 } ),
-      .seg_active_n           ( seg_active_n                 ),
-      .don_active_n           ( dp_n                         ),
-      .anodes                 ( anodes                       )
+    sevseg_player seven_segments (
+      .clk          ( digital_clock_divider [15]   ),
+      .arst_n       ( ~sim_rst                     ),
+      .track        ( track                        ),
+      .volume       ( volume                       ),
+      .note         ( last_note                    ),
+      .sounding     ( sounding                     ),
+      .seg_active_n ( seg_active_n                 ),
+      .dp_n         ( dp_n                         ),
+      .anodes       ( anodes                       )
     );
 //____________________________________________________________________________//
 

@@ -59,6 +59,8 @@ module audio_nexys_a7 (
     wire  [ 2:0]  track         ;
     wire  [ 2:0]  octave        ;
     wire          aud_pwm_loc   ;
+    wire  [ 6:0]  last_note     ;
+    wire          sounding      ;
 //____________________________________________________________________________//
 
 //------------- Clock & Reset                                      -----------//
@@ -152,7 +154,9 @@ module audio_nexys_a7 (
       .note_index ( note_index   ),
       .track      ( track        ),
       .octave     ( octave       ),
-      .leds       ( LED          )
+      .leds       ( LED          ),
+      .last_note  ( last_note    ),
+      .sounding   ( sounding     )
     );
 
     // open-drain output: '1' is set by the on-board pull-up to the clean analog 3.3V rail
@@ -162,9 +166,8 @@ module audio_nexys_a7 (
 //____________________________________________________________________________//
 
 //------------- Seven Segments Indicators                        -------------//
-    // track number, volume (hex), note and octave of the synth:  "...1 A C4"
+    // "1 10  C4": track, volume, the note playing now (dot = sharp), "--" when silent
     reg   [12:0]  digital_clock_divider;
-    logic [ 3:0]  note_hex;
 
     always_ff @( posedge clk_5mhz0d ) begin
       if ( !rst_n )
@@ -173,26 +176,17 @@ module audio_nexys_a7 (
         digital_clock_divider <= digital_clock_divider + 1;
     end
 
-    always_comb begin
-      case ( note_index )
-        3'd0:    note_hex = 'hc;  // C
-        3'd1:    note_hex = 'hd;  // D
-        3'd2:    note_hex = 'he;  // E
-        3'd3:    note_hex = 'hf;  // F
-        3'd4:    note_hex = 'h6;  // G
-        3'd5:    note_hex = 'ha;  // A
-        default: note_hex = 'hb;  // b
-      endcase
-    end
-
     // values change rarely; the display only shows them, a glitch for one refresh is invisible
-    sevseg_ctrl seven_segments_controller (
-      .clk                    ( digital_clock_divider [12]   ),
-      .arst_n                 ( rst_n                        ),
-      .sevseg_32bit_hex_val   ( { 16'h0, 4'( track ) + 4'd1, volume, note_hex, 4'( octave ) + 4'd1 } ),
-      .seg_active_n           ( {CG, CF, CE, CD, CC, CB, CA} ),
-      .don_active_n           ( DP                           ),
-      .anodes                 ( AN                           )
+    sevseg_player seven_segments (
+      .clk          ( digital_clock_divider [12]   ),
+      .arst_n       ( rst_n                        ),
+      .track        ( track                        ),
+      .volume       ( volume                       ),
+      .note         ( last_note                    ),
+      .sounding     ( sounding                     ),
+      .seg_active_n ( {CG, CF, CE, CD, CC, CB, CA} ),
+      .dp_n         ( DP                           ),
+      .anodes       ( AN                           )
     );
 //____________________________________________________________________________//
 

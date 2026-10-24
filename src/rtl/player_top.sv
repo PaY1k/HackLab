@@ -68,7 +68,9 @@ module player_top #(
     output wire  [ 2:0]  note_index ,
     output wire  [ 2:0]  track      ,
     output wire  [ 2:0]  octave     ,
-    output wire  [ 3:0]  leds           // 0 UART byte, 1 command understood, 2 note sounding, 3 SD ready
+    output wire  [ 3:0]  leds       ,   // 0 UART byte, 1 command understood, 2 note sounding, 3 SD ready
+    output wire  [ 6:0]  last_note  ,   // note playing now (MIDI number), for the seven-segment display
+    output wire          sounding
 );
 
 //------------- Switches                                         -------------//
@@ -337,6 +339,8 @@ module player_top #(
     .aud_pwm      ( aud_pwm      ),
     .out_u16      ( out_u16      ),
     .key_mask     ( key_mask     ),
+    .last_note    ( last_note    ),
+    .sounding     ( sounding     ),
     .mel_len_bcd  ( mel_len      ),
     .mel_progress ( mel_progress )
   );

@@ -38,7 +38,7 @@ module tb_audio_core;
     .sd_empty ( 1'b1 ), .sd_data ( 16'd0 ), .sd_step ( 16'd65527 ), .sd_rd ( ),
     .pc_empty ( 1'b1 ), .pc_data ( 16'd0 ), .pc_rd ( ),
     .tick ( tick ), .gain_zero ( gain_zero ), .aud_pwm ( pwm ), .out_u16 ( out_u16 ),
-    .key_mask ( key_mask ), .mel_len_bcd ( len_bcd ), .mel_progress ( progress )
+    .key_mask ( key_mask ), .last_note ( ), .sounding ( ), .mel_len_bcd ( len_bcd ), .mel_progress ( progress )
   );
 
   int    fd, n;

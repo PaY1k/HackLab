@@ -52,6 +52,8 @@ module audio_core #(
     output logic         aud_pwm      ,
     output logic [15:0]  out_u16      ,   // output sample, unsigned (for the scope)
     output wire  [35:0]  key_mask     ,
+    output wire  [ 6:0]  last_note    ,   // for the seven-segment display
+    output wire          sounding     ,
     output wire  [15:0]  mel_len_bcd  ,
     output wire  [ 9:0]  mel_progress
 );
@@ -166,7 +168,9 @@ module audio_core #(
     .midi_all_off ( midi_all_off                                  ),
     .track_out    ( synth_track                                   ),
     .midi_out     ( synth_midi                                    ),
-    .key_mask     ( key_mask                                      )
+    .key_mask     ( key_mask                                      ),
+    .last_note    ( last_note                                     ),
+    .sounding     ( sounding                                      )
   );
 
   wire signed [15:0] sd_sample, pc_sample;
