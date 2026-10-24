@@ -225,6 +225,12 @@ set_clock_groups -asynchronous \
   -group [get_clocks -of_objects [get_pins clk_gen/inst/mmcm_adv_inst/CLKOUT1]] \
   -group [get_clocks -of_objects [get_pins clk_gen/inst/mmcm_adv_inst/CLKOUT2]]
 
+## LEDs: 0 UART byte, 1 command understood, 2 note sounding, 3 SD card ready
+set_property -dict { PACKAGE_PIN H17   IOSTANDARD LVCMOS33 } [get_ports { LED[0] }]; #IO_L18P_T2_A24_15 Sch=led[0]
+set_property -dict { PACKAGE_PIN K15   IOSTANDARD LVCMOS33 } [get_ports { LED[1] }]; #IO_L24P_T3_RS1_15 Sch=led[1]
+set_property -dict { PACKAGE_PIN J13   IOSTANDARD LVCMOS33 } [get_ports { LED[2] }]; #IO_L17N_T2_A25_15 Sch=led[2]
+set_property -dict { PACKAGE_PIN N14   IOSTANDARD LVCMOS33 } [get_ports { LED[3] }]; #IO_L8P_T1_D11_14 Sch=led[3]
+
 ## USB-UART (FT2232HQ channel B): names as seen from the PC
 set_property -dict { PACKAGE_PIN C4    IOSTANDARD LVCMOS33 } [get_ports { UART_TXD_IN }];  #IO_L7P_T1_AD6P_35 Sch=uart_txd_in
 set_property -dict { PACKAGE_PIN D4    IOSTANDARD LVCMOS33 } [get_ports { UART_RXD_OUT }]; #IO_L11N_T1_SRCC_35 Sch=uart_rxd_out
@@ -238,4 +244,11 @@ set_property -dict { PACKAGE_PIN D2    IOSTANDARD LVCMOS33 } [get_ports { SD_DAT
 
 ## Slow asynchronous pins: no timing relation to the internal clocks
 set_false_path -from [get_ports { UART_TXD_IN SD_DAT0 SW[*] BTN* CPU_RESETN }]
-set_false_path -to   [get_ports { UART_RXD_OUT SD_SCK SD_CMD SD_DAT3 SD_RESET AUD_PWM AUD_SD VGA_* }]
+set_false_path -to   [get_ports { UART_RXD_OUT SD_SCK SD_CMD SD_DAT3 SD_RESET AUD_PWM AUD_SD VGA_* LED[*] }]
+
+## Bitstream: 3.3 V configuration bank, compressed, fast QSPI load (make flash)
+set_property CFGBVS VCCO [current_design]
+set_property CONFIG_VOLTAGE 3.3 [current_design]
+set_property BITSTREAM.GENERAL.COMPRESS TRUE [current_design]
+set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]
+set_property BITSTREAM.CONFIG.CONFIGRATE 33 [current_design]

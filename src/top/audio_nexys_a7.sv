@@ -12,6 +12,8 @@ module audio_nexys_a7 (
     input   logic            BTNR        ,
     input   logic            BTND        ,
     input   logic            CPU_RESETN  ,
+  //----------- LEDs: 0 UART byte, 1 command understood, 2 note sounding, 3 SD ready //
+    output  logic  [ 3:0]    LED         ,
   //----------- Seven Segments Indicators                        -------------//
     output  logic            DP, CG, CF, CE, CD, CC, CB, CA,
     output  logic  [ 7:0]    AN          ,
@@ -149,7 +151,8 @@ module audio_nexys_a7 (
       .volume     ( volume       ),
       .note_index ( note_index   ),
       .track      ( track        ),
-      .octave     ( octave       )
+      .octave     ( octave       ),
+      .leds       ( LED          )
     );
 
     // open-drain output: '1' is set by the on-board pull-up to the clean analog 3.3V rail

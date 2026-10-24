@@ -1,4 +1,4 @@
-.PHONY: deploy bit program test test-sd tables clear clean
+.PHONY: deploy bit program flash test test-sd test-midi tables clear clean
 
 # Vivado project with GUI
 deploy:
@@ -12,6 +12,11 @@ bit:
 program:
 	vivado -mode batch -nojournal -nolog -source ./src/tcl/program.tcl -tclargs audio_nexys_a7.bit
 
+# write the bitstream into the board's flash: the player starts by itself at power-up
+# (jumper JP1 on QSPI), so the USB cable can be moved to another PC
+flash:
+	vivado -mode batch -nojournal -nolog -source ./src/tcl/flash.tcl -tclargs audio_nexys_a7.bit
+
 # regenerate tables, font and screen text (src/rtl/mem)
 tables:
 	python3 tools/gen_tables.py
@@ -22,10 +27,16 @@ B = build
 test:
 	@mkdir -p $(B)
 	iverilog -g2012 -o $(B)/fifo src/rtl/async_fifo.sv src/tb/tb_async_fifo.sv && vvp -n $(B)/fifo | grep -E "PASS|FAIL"
+	iverilog -g2012 -o $(B)/mt -s tb_midi_text src/rtl/uart.sv src/rtl/midi_text_rx.sv src/tb/tb_midi_text.sv && vvp -n $(B)/mt | grep -E "PASS|FAIL"
 	iverilog -g2012 -o $(B)/pl -s tb_pc_link src/rtl/uart.sv src/rtl/pc_link.sv src/rtl/async_fifo.sv src/tb/tb_pc_link.sv && vvp -n $(B)/pl | grep -E "PASS|FAIL"
 	iverilog -g2012 -o $(B)/ac -s tb_audio_core src/rtl/poly_synth.sv src/rtl/melody_player.sv src/rtl/stream_reader.sv src/rtl/audio_core.sv src/rtl/player_ctrl.sv src/tb/tb_audio_core.sv
 	cd src/rtl/mem && vvp -n ../../../$(B)/ac +OUT=../../../$(B)/ac.txt
 	python3 tools/samples_to_wav.py $(B)/ac.txt $(B)/audio_core.wav 200
+
+# text MIDI commands over UART
+test-midi:
+	@mkdir -p $(B)
+	iverilog -g2012 -o $(B)/mt -s tb_midi_text src/rtl/uart.sv src/rtl/midi_text_rx.sv src/tb/tb_midi_text.sv && vvp -n $(B)/mt
 
 # SD card player against a model card (~4 minutes)
 test-sd:

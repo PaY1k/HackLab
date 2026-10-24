@@ -84,7 +84,10 @@ module top_audio (
       .volume     ( volume        ),
       .note_index ( note_index    ),
       .track      ( track         ),
-      .octave     ( octave        )
+      .octave     ( octave        ),
+      /* verilator lint_off PINCONNECTEMPTY */
+      .leds       (               )
+      /* verilator lint_on PINCONNECTEMPTY */
     );
 
     assign aud_en = 1'b1;

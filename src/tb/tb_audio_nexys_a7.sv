@@ -6,6 +6,7 @@ module tb_audio_nexys_a7 ();
   //
   logic             DP, CG, CF, CE, CD, CC, CB, CA;
   logic   [ 7:0]    AN;
+  logic   [ 3:0]    LED;
   //
   bit               BTNC, BTNU, BTNL, BTNR, BTND, CPU_RESETN;
   //

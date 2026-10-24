@@ -11,6 +11,11 @@
 //
 // Tracks: 0 synth, 1-2 melodies (BRAM), 3-4 WAV files from SD, 5 stream from PC.
 // Switches: SW[2:0] octave, SW[4:3] waveform, SW15 BTNL/BTNR play notes.
+//
+// USB-UART from the PC, PC_TEXT_MIDI selects the protocol:
+//   1: text MIDI commands at 115200 baud ("ON 60 100", "OFF 60", mido str(msg)...),
+//      see midi_text_rx.sv - for a Python program that sends notes from a keyboard
+//   0: binary packets at 921600 baud from tools/pc_player.py (audio stream + MIDI)
 module player_top #(
     parameter  FONT_FILE   = "font8x16.mem",
     parameter  TEXT_FILE   = "screen_text.mem",
@@ -20,7 +25,9 @@ module player_top #(
     parameter  INFO_FILE   = "melody_info.mem",
     parameter  STR_FILE    = "strings.mem",
     parameter  SPLASH_LOG2 = 27,
-    parameter  SD_WAIT_BITS = 24
+    parameter  SD_WAIT_BITS = 24,
+    parameter  PC_TEXT_MIDI = 1,
+    parameter  TEXT_CLKS_PER_BIT = 427     // 49.15865 MHz / 115200
 )(
   //--------- Clocks / resets                    --------//
     input  wire          aud_clk    ,   // 49.15865 MHz
@@ -59,7 +66,8 @@ module player_top #(
     output wire  [ 3:0]  volume     ,
     output wire  [ 2:0]  note_index ,
     output wire  [ 2:0]  track      ,
-    output wire  [ 2:0]  octave
+    output wire  [ 2:0]  octave     ,
+    output wire  [ 3:0]  leds           // 0 UART byte, 1 command understood, 2 note sounding, 3 SD ready
 );
 
 //------------- Switches                                         -------------//
@@ -115,23 +123,59 @@ module player_top #(
   wire [ 7:0] pc_title_char;
   wire        pc_title_valid, pc_title_chg;
 
-  pc_link pc_link (
-    .clk           ( aud_clk        ),
-    .rst_n         ( aud_rst_n      ),
-    .uart_rx_pin   ( uart_rx        ),
-    .uart_tx_pin   ( uart_tx        ),
-    .fifo_wr       ( pc_wr          ),
-    .fifo_data     ( pc_wdata       ),
-    .fifo_level    ( pc_level       ),
-    .midi_on       ( midi_on        ),
-    .midi_off      ( midi_off       ),
-    .midi_note     ( midi_note      ),
-    .midi_all_off  ( midi_all_off   ),
-    .title_idx     ( pc_title_idx   ),
-    .title_char    ( pc_title_char  ),
-    .title_valid   ( pc_title_valid ),
-    .title_changed ( pc_title_chg   )
-  );
+  wire        rx_activity, cmd_ok;
+
+  generate
+    if ( PC_TEXT_MIDI ) begin : g_text_midi
+      wire [7:0] rx_byte;
+      wire       rx_valid;
+
+      uart_rx #( .CLKS_PER_BIT ( TEXT_CLKS_PER_BIT ) ) uart_rx_text (
+        .clk ( aud_clk ), .rst_n ( aud_rst_n ), .rx ( uart_rx ), .data ( rx_byte ), .valid ( rx_valid )
+      );
+
+      midi_text_rx midi_text_rx (
+        .clk          ( aud_clk      ),
+        .rst_n        ( aud_rst_n    ),
+        .rx_data      ( rx_byte      ),
+        .rx_valid     ( rx_valid     ),
+        .midi_on      ( midi_on      ),
+        .midi_off     ( midi_off     ),
+        .midi_note    ( midi_note    ),
+        .midi_all_off ( midi_all_off ),
+        .cmd_ok       ( cmd_ok       )
+      );
+
+      assign rx_activity    = rx_valid;
+      assign uart_tx        = 1'b1;          // nothing to send back
+      assign pc_wr          = 1'b0;
+      assign pc_wdata       = '0;
+      assign pc_title_char  = 8'h20;
+      assign pc_title_valid = 1'b0;
+      assign pc_title_chg   = 1'b0;
+    end
+    else begin : g_packets
+      pc_link pc_link (
+        .clk           ( aud_clk        ),
+        .rst_n         ( aud_rst_n      ),
+        .uart_rx_pin   ( uart_rx        ),
+        .uart_tx_pin   ( uart_tx        ),
+        .fifo_wr       ( pc_wr          ),
+        .fifo_data     ( pc_wdata       ),
+        .fifo_level    ( pc_level       ),
+        .midi_on       ( midi_on        ),
+        .midi_off      ( midi_off       ),
+        .midi_note     ( midi_note      ),
+        .midi_all_off  ( midi_all_off   ),
+        .title_idx     ( pc_title_idx   ),
+        .title_char    ( pc_title_char  ),
+        .title_valid   ( pc_title_valid ),
+        .title_changed ( pc_title_chg   )
+      );
+      assign rx_activity = !uart_rx;
+      assign cmd_ok      = midi_on || midi_off || midi_all_off;
+    end
+  endgenerate
 
   async_fifo #( .DATA_WIDTH ( 16 ), .ADDR_WIDTH ( 12 ) ) pc_fifo (
     .wr_clk ( aud_clk ), .wr_rst_n ( aud_rst_n ), .wr_en ( pc_wr ), .wr_data ( pc_wdata ),
@@ -261,6 +305,21 @@ module player_top #(
     .mel_len_bcd  ( mel_len      ),
     .mel_progress ( mel_progress )
   );
+//____________________________________________________________________________//
+
+//------------- Debug LEDs: short events stretched to ~85 ms         ---------//
+  logic [21:0] led_rx_t, led_cmd_t;
+  always_ff @( posedge aud_clk or negedge aud_rst_n ) begin
+    if ( !aud_rst_n ) begin
+      led_rx_t  <= '0;
+      led_cmd_t <= '0;
+    end
+    else begin
+      led_rx_t  <= rx_activity ? '1 : ( led_rx_t  != 0 ? led_rx_t  - 1'b1 : '0 );
+      led_cmd_t <= cmd_ok      ? '1 : ( led_cmd_t != 0 ? led_cmd_t - 1'b1 : '0 );
+    end
+  end
+  assign leds = { card_ready, |key_mask, led_cmd_t != 0, led_rx_t != 0 };
 //____________________________________________________________________________//
 
 //------------- Screen                                           -------------//

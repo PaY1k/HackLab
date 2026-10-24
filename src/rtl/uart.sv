@@ -1,5 +1,7 @@
 // UART receiver and transmitter, 8N1.
-// CLKS_PER_BIT = f_clk / baud: 49.15865 MHz / 921600 = 53.3 -> 53 (0.6 % off, fine).
+// CLKS_PER_BIT = f_clk / baud, rounded:
+//   115200 baud: 49.15865 MHz / 115200 = 426.7 -> 427 (0.07 % off)
+//   921600 baud: 49.15865 MHz / 921600 =  53.3 ->  53 (0.6 % off)
 
 module uart_rx #(
     parameter  CLKS_PER_BIT = 53
@@ -11,7 +13,7 @@ module uart_rx #(
     output logic       valid        // one clock per received byte
 );
   (* ASYNC_REG = "TRUE" *) logic [1:0] rx_sync;
-  logic [7:0]  cnt;
+  logic [15:0] cnt;
   logic [3:0]  bit_i;
   logic        busy;
   logic [7:0]  sh;
@@ -32,14 +34,14 @@ module uart_rx #(
       if ( !busy ) begin
         if ( !rx_sync[1] ) begin               // start bit edge
           busy  <= 1'b1;
-          cnt   <= 8'( CLKS_PER_BIT / 2 );     // go to the middle of the start bit
+          cnt   <= 16'( CLKS_PER_BIT / 2 );     // go to the middle of the start bit
           bit_i <= '0;
         end
       end
       else if ( cnt != 0 )
         cnt <= cnt - 1'b1;
       else begin
-        cnt <= 8'( CLKS_PER_BIT - 1 );
+        cnt <= 16'( CLKS_PER_BIT - 1 );
         if ( bit_i == 4'd0 ) begin             // middle of start bit
           if ( rx_sync[1] ) busy <= 1'b0;      // glitch, not a start bit
           bit_i <= 4'd1;
@@ -71,7 +73,7 @@ module uart_tx #(
     output logic       busy  ,
     output logic       tx
 );
-  logic [7:0] cnt;
+  logic [15:0] cnt;
   logic [3:0] bit_i;
   logic [9:0] sh;
 
@@ -101,7 +103,7 @@ module uart_tx #(
         tx    <= sh[0];
         sh    <= { 1'b1, sh[9:1] };
         bit_i <= bit_i + 1'b1;
-        cnt   <= 8'( CLKS_PER_BIT - 1 );
+        cnt   <= 16'( CLKS_PER_BIT - 1 );
       end
     end
   end

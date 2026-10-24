@@ -14,8 +14,8 @@
 | 02 | Коробейники | мелодия из блочной памяти (BRAM) |
 | 03 | Ода к радости | мелодия из BRAM |
 | 04, 05 | первые два файла `*.WAV` с microSD | FAT32, WAV 8/16 бит, моно/стерео, любая частота дискретизации |
-| 06 | поток с ПК | любой файл (MP3 тоже), ПК декодирует и шлёт по USB-UART |
-| — | MIDI-клавиатура | через ноутбук, 8-голосный синтезатор поверх любого трека |
+| 06 | поток с ПК | любой файл (MP3 тоже), ПК декодирует и шлёт по USB-UART (бинарный режим, `PC_TEXT_MIDI = 0`) |
+| — | MIDI-клавиатура | через ПК текстом по UART 115200, 8-голосный синтезатор поверх любого трека |
 
 Качество звука:
 
@@ -32,7 +32,8 @@
 
 ```bash
 make bit        # синтез + имплементация без GUI (~10 мин): audio_nexys_a7.bit и reports/
-make program    # прошить плату по USB
+make program    # прошить плату по USB (до выключения питания)
+make flash      # записать во flash: плата грузит плеер сама при включении (JP1 = QSPI)
 ```
 
 `make bit` в конце печатает `TIMING OK` или `TIMING FAILED`, подробности в `reports/timing.txt`, переходы между клоками в `reports/cdc.txt`.
@@ -70,15 +71,40 @@ tools/prepare_sd.sh /media/$USER/SDCARD song1.mp3 song2.mp3
 
 Получатся `TRACK1.WAV` и `TRACK2.WAV` (16 бит, моно, 48 кГц), на экране это треки 04 и 05. Если карты нет, в плейлисте написано «SD: нет карты»; карту можно вставить на ходу, плеер переподключится сам.
 
-## Поток с ПК и MIDI-клавиатура
+## MIDI-клавиатура через ПК (UART)
+
+Клавиатура подключена к Windows-ПК, программа на Python шлёт ноты на плату текстом по USB-UART: **115200 бод, 8N1, одна команда на строку** (конец строки `\n`, `\r` или `;`, регистр не важен):
+
+| Строка | Действие |
+|---|---|
+| `ON 60 100` | нажата нота 60 (C4) с силой 100; сила 0 = отпущена |
+| `OFF 60` | отпущена нота 60 |
+| `OFF`, `STOP`, `PANIC` | отпустить все ноты |
+| `60 100` / `60 0` | просто номер ноты и сила |
+| `note_on channel=0 note=60 velocity=100 time=0` | то, что выдаёт `str(msg)` в mido |
+| `note_off channel=0 note=60 velocity=0 time=0` | |
+| `control_change channel=0 control=123 value=0` | все ноты выключить |
+
+Ноты — номера MIDI (60 = C4, 69 = A4 = 440 Гц), играют 8 голосов одновременно поверх любого трека, на экране загораются клавиши пианино (C3…B5). Разбор: `src/rtl/midi_text_rx.sv`, проверка: `make test-midi`.
+
+**Подключение.** У Nexys A7 один USB-разъём и для прошивки, и для UART, и для питания. Если прошить плату с Linux и переткнуть кабель в Windows-ПК, прошивка пропадёт. Поэтому:
 
 ```bash
-pip install pyserial mido python-rtmidi       # и ffmpeg: sudo apt install ffmpeg
-python3 tools/pc_player.py --list             # порты и MIDI-устройства
-python3 tools/pc_player.py song.mp3 --midi auto
+make bit && make flash      # на Linux: прошивка записывается во flash платы
 ```
 
-Файл играет на треке 06 (название файла появляется в плейлисте), MIDI-клавиатура играет поверх любого трека. Подробнее и протокол: `tools/pc_player.py`, `src/rtl/pc_link.sv`.
+Перемычку **JP1 поставить в QSPI** — теперь плата сама загружает плеер при каждом включении. Кабель в Windows-ПК, плата появится как `USB Serial Port (COMx)` в диспетчере устройств. Проверить без своей программы:
+
+```powershell
+pip install pyserial mido python-rtmidi
+python tools\midi_uart_send.py --list
+python tools\midi_uart_send.py --port COM5 --scale        # гамма и аккорд
+python tools\midi_uart_send.py --port COM5 --midi auto    # клавиатура -> плата
+```
+
+Светодиоды платы для отладки: **LD0** — пришёл байт по UART, **LD1** — команда понята, **LD2** — звучит нота, **LD3** — SD-карта готова. Если LD0 мигает, а LD1 нет — строки приходят, но в другом формате.
+
+Бинарный протокол на 921600 бод с потоком звука (`tools/pc_player.py`, трек 06) включается параметром `PC_TEXT_MIDI = 0` в `src/rtl/player_top.sv`.
 
 ## Как устроено
 
@@ -105,6 +131,8 @@ python3 tools/pc_player.py song.mp3 --midi auto
 | Проверка | Что проверяет | Как запустить |
 |---|---|---|
 | `tb_async_fifo` | 20 000 слов через FIFO между несвязанными клоками: порядок, без потерь | `make test` |
+| `tb_midi_text` | текстовые MIDI-команды по UART 115200: 14 строк в разных форматах | `make test`, `make test-midi` |
+| `tb_midi_system` | весь плеер: `ON 69 100` по UART -> звук 440 Гц, `OFF` -> затухание, светодиоды | см. файл |
 | `tb_pc_link` | UART-пакеты: звук, MIDI (on / off / velocity 0 / all off), название, кредиты | `make test` |
 | `tb_audio_core` | высота нот (A4 = 440.0 Гц), мелодия, пауза, плавность; пишет WAV | `make test` → `build/audio_core.wav` |
 | `tb_sd_player` | модель SD-карты с образом FAT32: монтирование, каталог, цепочка кластеров, WAV 16 бит моно и 8 бит стерео — каждый отсчёт сверяется | `make test-sd` |
@@ -137,7 +165,8 @@ python3 tools/frame_to_png.py /tmp/frame.txt frame.png
 │   │   ├── stream_reader.sv     сэмплы из FIFO с частотой файла
 │   │   ├── sd_card.sv           microSD в режиме SPI
 │   │   ├── sd_player.sv         FAT32 + WAV
-│   │   ├── pc_link.sv, uart.sv  связь с ПК: звук, MIDI, название
+│   │   ├── midi_text_rx.sv      текстовые MIDI-команды с ПК
+│   │   ├── pc_link.sv, uart.sv  UART; бинарный протокол: звук, MIDI, название
 │   │   ├── screen_text_ctrl.sv  изменяемый текст экрана
 │   │   ├── player_screen.sv     таймер, CDC статуса, осциллограф, экран
 │   │   ├── vga_ui.sv            картинка
@@ -147,9 +176,10 @@ python3 tools/frame_to_png.py /tmp/frame.txt frame.png
 │   │   └── mem/                 таблицы: шрифт, текст экрана, синус, ноты, мелодии, строки
 │   ├── sim/                     симулятор Verilator + SDL2
 │   ├── tb/                      тестбенчи и модель SD-карты
-│   └── tcl/                     deploy.tcl, build.tcl, program.tcl
+│   └── tcl/                     deploy.tcl, build.tcl, program.tcl, flash.tcl
 └── tools/
-    ├── pc_player.py             плеер на ПК: поток файла и MIDI по USB-UART
+    ├── midi_uart_send.py        проверка MIDI по UART с Windows: гамма или клавиатура
+    ├── pc_player.py             поток файла и MIDI (бинарный режим)
     ├── prepare_sd.sh            музыка на SD-карту
     ├── gen_tables.py            синус, частоты нот, мелодии, строки
     ├── gen_font.py, gen_screen.py   шрифт 8×16 CP866, статичный текст экрана
