@@ -12,3 +12,8 @@ src/ipcores/*/*
 
 # Verilator simulator build
 src/sim/obj_dir/
+
+# make bit / make test outputs
+audio_nexys_a7.bit
+reports/
+build/

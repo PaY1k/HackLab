@@ -7,11 +7,15 @@ The screen is a grid of 8x16 cells: 100 columns x 40 rows (800x600 visible
   0 white   1 grey   2 dim   3 green   4 cyan   5 yellow   6 red   7 dark
 Address = row * 128 + col  (5120 words).
 
-Cells that vga_ui rewrites every frame (do not put static text there):
-  row 1,  col 84..94  play / pause status
-  row 30, col 26..27  note + octave       ("C4")
-  row 30, col 70..71  volume              ("08")
-  row 33, col 92..96  track length        ("05:00" / "--:--")
+Cells written at run time (do not put static text there):
+  vga_ui.sv:
+    row 1,  col 84..94  play / pause status
+    row 30, col 70..71  volume              ("08")
+    row 33, col 92..96  track length        ("05:00" / "--:--")
+  screen_text_ctrl.sv:
+    row 1,  col 72..83  source              (СИНТЕЗ, BRAM, SD-КАРТА, ПК / UART)
+    row 30, col 4..43   current track title
+    rows 12, 14, 16, col 9..26  SD files, PC stream title
 
 Usage:  python3 tools/gen_screen.py
 """
@@ -30,23 +34,23 @@ TEXT = [
     # header
     (1, 3,  NOTE + " SBER AUDIO", GREEN),
     (1, 16, "· плеер на ПЛИС Nexys A7", GREY),
-    (1, 62, "ИСТОЧНИК: СИНТЕЗ", DIM),
+    (1, 62, "ИСТОЧНИК:", DIM),
     # playlist panel (items: rows 6, 8, ... 16, highlighted by track index)
     (4, 4,  "ПЛЕЙЛИСТ", GREY),
     (6, 5,  "01  Синтезатор нот", GREY),
-    (8, 5,  "02  Мелодия из BRAM", GREY),
-    (10, 5, "03  WAV с SD-карты", GREY),
-    (12, 5, "04  MIDI-клавиатура", GREY),
-    (14, 5, "05  Поток с ПК", GREY),
-    (16, 5, "06  Свободно", DIM),
-    (19, 4, LEFT + " " + RIGHT + "  нота", DIM),
-    (20, 4, "SW[2:0] октава", DIM),
+    (8, 5,  "02  Коробейники", GREY),
+    (10, 5, "03  Ода к радости", GREY),
+    (12, 5, "04", GREY),
+    (14, 5, "05", GREY),
+    (16, 5, "06", GREY),
+    (18, 4, LEFT + " " + RIGHT + " BTNL/BTNR  трек", DIM),
+    (19, 4, "SW15 ноты на " + LEFT + " " + RIGHT, DIM),
+    (20, 4, "SW2:0 окт.  SW4:3 волна", DIM),
     # scope panel
     (4, 35, "ОСЦИЛЛОГРАФ", GREY),
     (4, 82, "48 кГц · ШИМ", DIM),
     # bottom panel
     (29, 4,  "СЕЙЧАС ИГРАЕТ", DIM),
-    (30, 4,  "Синтезатор нот · нота", WHITE),
     (29, 70, "ГРОМКОСТЬ", DIM),
     (30, 72, "/15", DIM),
     (33, 90, "/", DIM),

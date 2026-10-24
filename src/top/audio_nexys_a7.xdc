@@ -224,3 +224,18 @@ set_clock_groups -asynchronous \
   -group [get_clocks -of_objects [get_pins clk_gen/inst/mmcm_adv_inst/CLKOUT0]] \
   -group [get_clocks -of_objects [get_pins clk_gen/inst/mmcm_adv_inst/CLKOUT1]] \
   -group [get_clocks -of_objects [get_pins clk_gen/inst/mmcm_adv_inst/CLKOUT2]]
+
+## USB-UART (FT2232HQ channel B): names as seen from the PC
+set_property -dict { PACKAGE_PIN C4    IOSTANDARD LVCMOS33 } [get_ports { UART_TXD_IN }];  #IO_L7P_T1_AD6P_35 Sch=uart_txd_in
+set_property -dict { PACKAGE_PIN D4    IOSTANDARD LVCMOS33 } [get_ports { UART_RXD_OUT }]; #IO_L11N_T1_SRCC_35 Sch=uart_rxd_out
+
+## microSD in SPI mode
+set_property -dict { PACKAGE_PIN E2    IOSTANDARD LVCMOS33 } [get_ports { SD_RESET }]; #IO_L14P_T2_SRCC_35 Sch=sd_reset
+set_property -dict { PACKAGE_PIN B1    IOSTANDARD LVCMOS33 } [get_ports { SD_SCK }];   #IO_L9P_T1_DQS_AD7P_35 Sch=sd_sck
+set_property -dict { PACKAGE_PIN C1    IOSTANDARD LVCMOS33 } [get_ports { SD_CMD }];   #IO_L16N_T2_35 Sch=sd_cmd
+set_property -dict { PACKAGE_PIN C2    IOSTANDARD LVCMOS33 PULLUP true } [get_ports { SD_DAT0 }]; #IO_L16P_T2_35 Sch=sd_dat[0]
+set_property -dict { PACKAGE_PIN D2    IOSTANDARD LVCMOS33 } [get_ports { SD_DAT3 }];  #IO_L14N_T2_SRCC_35 Sch=sd_dat[3]
+
+## Slow asynchronous pins: no timing relation to the internal clocks
+set_false_path -from [get_ports { UART_TXD_IN SD_DAT0 SW[*] BTN* CPU_RESETN }]
+set_false_path -to   [get_ports { UART_RXD_OUT SD_SCK SD_CMD SD_DAT3 SD_RESET AUD_PWM AUD_SD VGA_* }]

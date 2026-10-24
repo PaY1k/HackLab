@@ -47,3 +47,15 @@ sudo apt install build-essential verilator libsdl2-dev
 | RISC-V тулчейн | программно-аппаратное направление: прошивка для soft CPU | `gcc-riscv64-unknown-elf` |
 | Терминал для UART (`picocom`, `minicom`, `screen`) | вывод отладочной печати soft CPU через USB-UART платы | `picocom` |
 | GTKWave | просмотр временных диаграмм, если включить трассировку Verilator (`--trace`) | `gtkwave` |
+
+## 4. Для плеера (этот репозиторий)
+
+| Инструмент | Зачем | Установка |
+|---|---|---|
+| Icarus Verilog 11+ | `make test`, `make test-sd`, рендер кадра экрана без Vivado | `sudo apt install iverilog` |
+| Python 3 + Pillow | генераторы таблиц и шрифта, кадр -> PNG | `pip install pillow` |
+| ffmpeg | `tools/prepare_sd.sh`, `tools/pc_player.py` | `sudo apt install ffmpeg` |
+| pyserial, mido, python-rtmidi | `tools/pc_player.py`: поток с ПК и MIDI-клавиатура | `pip install pyserial mido python-rtmidi` |
+
+Доступ к USB-UART платы без sudo: `sudo usermod -aG dialout $USER`, затем перелогиниться.
+

@@ -19,7 +19,7 @@
 // and come out as out_*: register them in the top together with the color.
 //
 // Text cells that change at run time are written by this module during the
-// vertical blanking (status, note, volume, track length). Other modules can
+// vertical blanking (status, volume, track length). Other modules can
 // write any cell through txt_we / txt_addr / txt_data (addr = row*128 + col,
 // data = {color[3:0], cp866_char[7:0]}), e.g. track names from the SD card.
 module vga_ui #(
@@ -39,8 +39,6 @@ module vga_ui #(
   //--------- Player status (pixel domain!)      --------//
     input  wire           play        ,
     input  wire  [ 3:0]   volume      ,   // 0..15
-    input  wire  [ 2:0]   note_index  ,   // 0..6 = C D E F G A B
-    input  wire  [ 2:0]   octave      ,   // 0..7, shown as 1..8
     input  wire  [15:0]   time_bcd    ,   // elapsed mm:ss
     input  wire  [15:0]   len_bcd     ,   // track length mm:ss
     input  wire           len_valid   ,   // 0: length unknown, shows --:--
@@ -164,7 +162,7 @@ module vga_ui #(
   end
 
   // Dynamic cells, written during vertical blanking
-  localparam N_DYN = 20;
+  localparam N_DYN = 18;
   logic [4:0]  dyn_idx;
   logic        dyn_active;
   logic [12:0] dyn_addr;
@@ -185,14 +183,6 @@ module vga_ui #(
     endcase
   endfunction
 
-  function automatic [7:0] note_char (input [2:0] n);
-    case ( n )
-      3'd0: note_char = "C";  3'd1: note_char = "D";  3'd2: note_char = "E";
-      3'd3: note_char = "F";  3'd4: note_char = "G";  3'd5: note_char = "A";
-      default: note_char = "B";
-    endcase
-  endfunction
-
   always_comb begin
     dyn_addr = 13'd0;
     dyn_data = 12'h020;
@@ -200,25 +190,17 @@ module vga_ui #(
       dyn_addr = 13'( 1 * 128 + 84 ) + 13'( dyn_idx );
       dyn_data = { play ? 4'd3 : 4'd5, status_char( play, dyn_idx[3:0] ) };
     end
-    else if ( dyn_idx == 5'd11 ) begin                             // row 30, col 26: note
-      dyn_addr = 13'( 30 * 128 + 26 );
-      dyn_data = { 4'd4, note_char( note_index ) };
-    end
-    else if ( dyn_idx == 5'd12 ) begin                             // row 30, col 27: octave
-      dyn_addr = 13'( 30 * 128 + 27 );
-      dyn_data = { 4'd4, 8'h31 + 8'( octave ) };
-    end
-    else if ( dyn_idx == 5'd13 ) begin                             // row 30, col 70..71: volume
+    else if ( dyn_idx == 5'd11 ) begin                             // row 30, col 70..71: volume
       dyn_addr = 13'( 30 * 128 + 70 );
       dyn_data = { 4'd0, ( volume >= 4'd10 ) ? 8'h31 : 8'h30 };
     end
-    else if ( dyn_idx == 5'd14 ) begin
+    else if ( dyn_idx == 5'd12 ) begin
       dyn_addr = 13'( 30 * 128 + 71 );
       dyn_data = { 4'd0, 8'h30 + 8'( ( volume >= 4'd10 ) ? volume - 4'd10 : volume ) };
     end
     else begin                                                     // row 33, col 92..96: length
-      dyn_addr = 13'( 33 * 128 + 92 ) + 13'( dyn_idx - 5'd15 );
-      case ( dyn_idx - 5'd15 )
+      dyn_addr = 13'( 33 * 128 + 92 ) + 13'( dyn_idx - 5'd13 );
+      case ( dyn_idx - 5'd13 )
         5'd0:    dyn_data = { 4'd1, len_valid ? 8'h30 + 8'( len_bcd[15:12] ) : 8'h2D };
         5'd1:    dyn_data = { 4'd1, len_valid ? 8'h30 + 8'( len_bcd[11: 8] ) : 8'h2D };
         5'd2:    dyn_data = { 4'd1, 8'h3A };

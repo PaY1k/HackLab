@@ -164,6 +164,9 @@ int main(int argc, char** argv) {
   top->sw0 = 0;
   top->sw1 = 0;
   top->sw2 = 0;
+  top->sw3 = 0;
+  top->sw4 = 0;
+  top->sw15 = 0;
 
   // main loop
   bool prev_c = false;
@@ -173,6 +176,10 @@ int main(int argc, char** argv) {
   bool prev_r = false;
 
   bool prev_oct[8] = {false};
+  bool prev_n = false;      // 'N': SW15, arrows play notes on track 1
+  bool prev_w = false;      // 'W': SW[4:3], next waveform
+  int  wave   = 0;
+  bool notes  = false;
 
   int pwm_high  = 0;      // 
   int pwm_ticks = 0;
@@ -249,6 +256,11 @@ int main(int argc, char** argv) {
       top->sw0 = (cur_oct >> 0) & 1;
       top->sw1 = (cur_oct >> 1) & 1;
       top->sw2 = (cur_oct >> 2) & 1;
+      if (pressed(keyb_state[SDL_SCANCODE_N], prev_n)) notes = !notes;
+      if (pressed(keyb_state[SDL_SCANCODE_W], prev_w)) wave  = (wave + 1) & 3;
+      top->sw3  = (wave >> 0) & 1;
+      top->sw4  = (wave >> 1) & 1;
+      top->sw15 = notes ? 1 : 0;
 
       if (pressed(keyb_state[SDL_SCANCODE_V], prev_v)) vga_on   = !vga_on;
       if (pressed(keyb_state[SDL_SCANCODE_A], prev_a)) audio_on = !audio_on;
@@ -267,8 +279,8 @@ int main(int argc, char** argv) {
       }
 
       char title[160];
-      snprintf(title, sizeof(title), "play=%d, volume=%d, sim speed %.0f%% of real time%s%s",
-              (int)top->play, (int)top->volume, sim_speed * 100.0,
+      snprintf(title, sizeof(title), "track=%d, play=%d, volume=%d, sim speed %.0f%% of real time%s%s",
+              (int)top->track + 1, (int)top->play, (int)top->volume, sim_speed * 100.0,
               vga_on ? "" : ", VGA off (V)", audio_on ? "" : ", audio off (A)");
       SDL_SetWindowTitle(sdl_window, title);
     }
@@ -296,7 +308,7 @@ int main(int argc, char** argv) {
         pwm_high++;
       if (++pwm_ticks >= PWM_PERIOD_CLKS) {
         float duty   = (float)pwm_high / (float)pwm_ticks;  
-        float dc     = (float)top->volume / 32.0f;          // constant of displacement
+        float dc     = 0.5f;                                // silence is the middle of the PWM range
         float sample = (duty - dc) * 2.0f;
 
         if (!top->aud_en) sample = 0.0f;

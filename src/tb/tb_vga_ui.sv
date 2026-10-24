@@ -36,7 +36,7 @@ module tb_vga_ui #(
   vga_ui #( .SPLASH_LOG2 ( SPLASH_LOG2 ) ) ui (
     .pixel_clk ( clk ), .rst_n ( rst_n ),
     .h_coord ( h ), .v_coord ( v ), .h_sync ( hs ), .v_sync ( vs ), .disp_enbl ( de ),
-    .play ( PLAY[0] ), .volume ( 4'd11 ), .note_index ( 3'd5 ), .octave ( 3'd3 ),
+    .play ( PLAY[0] ), .volume ( 4'd11 ),
     .time_bcd ( 16'h0123 ), .len_bcd ( 16'h0345 ), .len_valid ( 1'b1 ), .progress ( 10'd400 ),
     .track_idx ( 3'd0 ), .key_mask ( 36'd1 << ( 12 + 9 ) ),
     .scope_addr ( scope_addr ), .scope_data ( scope_data ), .frame_start ( fs ),

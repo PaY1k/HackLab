@@ -125,7 +125,8 @@ if {$SrcMem ne ""} {add_files -norecurse $SrcMem}
 set_property top $TopModule [current_fileset]
 set_property top tb_audio_nexys_a7 [get_filesets sim_1]
 
-start_gui
+# make bit sets NO_GUI and sources this script, make deploy opens the GUI
+if {![info exists NO_GUI]} { start_gui }
 # Stage 7: Upgrade IP Cores (if needed)
 # report_ip_status -name ip_status 
 # set IpCores [get_ips]

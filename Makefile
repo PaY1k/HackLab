@@ -1,10 +1,41 @@
-.PHONY: deploy clear clean
+.PHONY: deploy bit program test test-sd tables clear clean
 
+# Vivado project with GUI
 deploy:
 	vivado -mode tcl -source ./src/tcl/deploy.tcl
 
+# bitstream without GUI: ./audio_nexys_a7.bit + ./reports (timing, utilization, CDC)
+bit:
+	vivado -mode batch -nojournal -log reports_vivado.log -source ./src/tcl/build.tcl
+
+# load the bitstream into the board over USB (JTAG)
+program:
+	vivado -mode batch -nojournal -nolog -source ./src/tcl/program.tcl -tclargs audio_nexys_a7.bit
+
+# regenerate tables, font and screen text (src/rtl/mem)
+tables:
+	python3 tools/gen_tables.py
+	python3 tools/gen_screen.py
+
+# self-checking tests in Icarus Verilog (no Vivado needed), ~2 minutes
+B = build
+test:
+	@mkdir -p $(B)
+	iverilog -g2012 -o $(B)/fifo src/rtl/async_fifo.sv src/tb/tb_async_fifo.sv && vvp -n $(B)/fifo | grep -E "PASS|FAIL"
+	iverilog -g2012 -o $(B)/pl -s tb_pc_link src/rtl/uart.sv src/rtl/pc_link.sv src/rtl/async_fifo.sv src/tb/tb_pc_link.sv && vvp -n $(B)/pl | grep -E "PASS|FAIL"
+	iverilog -g2012 -o $(B)/ac -s tb_audio_core src/rtl/poly_synth.sv src/rtl/melody_player.sv src/rtl/stream_reader.sv src/rtl/audio_core.sv src/rtl/player_ctrl.sv src/tb/tb_audio_core.sv
+	cd src/rtl/mem && vvp -n ../../../$(B)/ac +OUT=../../../$(B)/ac.txt
+	python3 tools/samples_to_wav.py $(B)/ac.txt $(B)/audio_core.wav 200
+
+# SD card player against a model card (~4 minutes)
+test-sd:
+	@mkdir -p $(B)
+	python3 tools/make_sd_image.py $(B)/sd
+	iverilog -g2012 -o $(B)/sdp -s tb_sd_player src/rtl/sd_card.sv src/rtl/sd_player.sv src/rtl/async_fifo.sv src/tb/sd_card_model.sv src/tb/tb_sd_player.sv
+	cd $(B) && vvp -n sdp | grep -E "files|file1|TONE1|CHORD|PASS|FAIL"
+
 clear:
-	@rm -rf ./vivado *.jou *.log
+	@rm -rf ./vivado ./build ./reports *.jou *.log
 	@rm -rf src/ipcores/clk_wiz_0/clk_wiz_0_clk_wiz.v
 	@rm -rf src/ipcores/clk_wiz_0/clk_wiz_0.v
 	@rm -rf src/ipcores/clk_wiz_0/clk_wiz_0.veo

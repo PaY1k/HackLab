@@ -14,6 +14,11 @@ module tb_audio_nexys_a7 ();
   //
   logic   [ 3:0]    VGA_R, VGA_G, VGA_B;
   logic             VGA_HS, VGA_VS;
+  //
+  logic             UART_TXD_IN = 1'b1;   // PC idle
+  logic             UART_RXD_OUT;
+  logic             SD_RESET, SD_SCK, SD_CMD, SD_DAT3;
+  logic             SD_DAT0 = 1'b1;       // no card
 
   //----------- CLK: 100 MHz (period 10 ns) -//
     always #5

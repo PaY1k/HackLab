@@ -6,9 +6,9 @@
 // Used by both tops: src/top/audio_nexys_a7.sv (board) and src/sim/top_audio.sv
 // (Verilator). Outputs are registered, connect them straight to the pins.
 //
-// To show more (track name, real length / position from the SD card) drive
-// track_idx / len_bcd / len_valid / progress and write text cells through
-// vga_ui's txt_* port.
+// Text cells can be written from the audio domain through txt_we / txt_word
+// ({addr[12:0], color[3:0], cp866 char[7:0]}, see screen_text_ctrl.sv): the
+// words cross to pixel_clk through a small async FIFO.
 module player_screen #(
     parameter  FONT_FILE   = "font8x16.mem",
     parameter  TEXT_FILE   = "screen_text.mem",
@@ -19,8 +19,7 @@ module player_screen #(
     input  wire          aud_rst_n    ,
     input  wire          play         ,
     input  wire  [ 3:0]  volume       ,
-    input  wire  [ 2:0]  note_index   ,
-    input  wire  [ 2:0]  octave       ,   // 0..7
+    input  wire  [35:0]  key_mask     ,   // piano keys lit, bit 0 = C3 (MIDI 48)
     input  wire          sample_valid ,   // a sample went to the PWM (fifo_rd_en)
     input  wire  [15:0]  sample       ,   // that sample, unsigned
     input  wire          aud_en       ,   // amplifier on = sound is playing
@@ -29,6 +28,9 @@ module player_screen #(
     input  wire          len_valid    ,
     input  wire  [ 9:0]  progress     ,   // used when len_valid = 1
     input  wire          time_clear   ,   // restart the timer (track change)
+    input  wire          txt_we       ,   // text cell write
+    input  wire  [24:0]  txt_word     ,
+    output wire          txt_full     ,
   //--------- Pixel domain                       --------//
     input  wire          pix_clk      ,
     input  wire          pix_rst_n    ,
@@ -79,10 +81,10 @@ module player_screen #(
 //____________________________________________________________________________//
 
 //------------- Status -> pixel domain                           -------------//
-  localparam SW = 1 + 4 + 3 + 3 + 16 + 16 + 1 + 10 + 3;
+  localparam SW = 1 + 4 + 16 + 16 + 1 + 10 + 3 + 36;
 
-  wire  [SW-1:0] status_aud = { play, volume, note_index, octave, time_bcd,
-                                len_bcd, len_valid, progress_aud, track_idx };
+  wire  [SW-1:0] status_aud = { play, volume, time_bcd, len_bcd, len_valid,
+                                progress_aud, track_idx, key_mask };
   wire  [SW-1:0] status_pix;
 
   cdc_bus #( .WIDTH ( SW ) ) status_cdc (
@@ -96,21 +98,22 @@ module player_screen #(
 
   wire         p_play;
   wire [ 3:0]  p_volume;
-  wire [ 2:0]  p_note, p_octave, p_track;
+  wire [ 2:0]  p_track;
   wire [15:0]  p_time, p_len;
   wire         p_len_valid;
   wire [ 9:0]  p_progress;
-  assign { p_play, p_volume, p_note, p_octave, p_time, p_len, p_len_valid, p_progress, p_track } = status_pix;
+  wire [35:0]  p_keys;
+  assign { p_play, p_volume, p_time, p_len, p_len_valid, p_progress, p_track, p_keys } = status_pix;
 
-  // Piano: the current note is lit in the middle octave of the three
-  logic [3:0] semi;
-  always_comb begin
-    case ( p_note )
-      3'd0: semi = 4'd0;   3'd1: semi = 4'd2;   3'd2: semi = 4'd4;   3'd3: semi = 4'd5;
-      3'd4: semi = 4'd7;   3'd5: semi = 4'd9;   default: semi = 4'd11;
-    endcase
-  end
-  wire [35:0] key_mask = 36'd1 << ( 6'd12 + 6'( semi ) );
+  // Text writes -> pixel domain
+  wire        txt_empty;
+  wire [24:0] txt_q;
+  async_fifo #( .DATA_WIDTH ( 25 ), .ADDR_WIDTH ( 6 ) ) txt_fifo (
+    .wr_clk   ( aud_clk    ), .wr_rst_n ( aud_rst_n ), .wr_en ( txt_we ), .wr_data ( txt_word ),
+    .full     ( txt_full   ), .wr_level (           ),
+    .rd_clk   ( pix_clk    ), .rd_rst_n ( pix_rst_n ), .rd_en ( !txt_empty ), .rd_data ( txt_q ),
+    .empty    ( txt_empty  ), .rd_level (           )
+  );
 //____________________________________________________________________________//
 
 //------------- Picture                                          -------------//
@@ -161,20 +164,18 @@ module player_screen #(
     .disp_enbl   ( disp_enbl   ),
     .play        ( p_play      ),
     .volume      ( p_volume    ),
-    .note_index  ( p_note      ),
-    .octave      ( p_octave    ),
     .time_bcd    ( p_time      ),
     .len_bcd     ( p_len       ),
     .len_valid   ( p_len_valid ),
     .progress    ( p_progress  ),
     .track_idx   ( p_track     ),
-    .key_mask    ( key_mask    ),
+    .key_mask    ( p_keys      ),
     .scope_addr  ( scope_addr  ),
     .scope_data  ( scope_data  ),
     .frame_start ( frame_start ),
-    .txt_we      ( 1'b0        ),
-    .txt_addr    ( 13'd0       ),
-    .txt_data    ( 12'd0       ),
+    .txt_we      ( !txt_empty     ),
+    .txt_addr    ( txt_q[24:12]   ),
+    .txt_data    ( txt_q[11:0]    ),
     .red         ( red         ),
     .green       ( green       ),
     .blue        ( blue        ),
