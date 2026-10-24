@@ -1,4 +1,4 @@
-module audio_nexys_a7 (
+ audio_nexys_a7 
   //----------- CLOCK                                            -------------//
     input   logic            CLK100MHZ ,
   //----------- Switches                                         -------------//
@@ -10,6 +10,8 @@ module audio_nexys_a7 (
     input   logic            BTNR      ,
     input   logic            BTND      ,
     input   logic            CPU_RESETN,
+    input   logic            PS2_CLK,
+    input   logic            PS2_DATA,
   //----------- Seven Segments Indicators                        -------------//
     output  logic            DP, CG, CF, CE, CD, CC, CB, CA,
     output  logic  [ 7:0]    AN        ,
@@ -22,7 +24,7 @@ module audio_nexys_a7 (
     output  logic  [ 3:0]    VGA_B     ,
     output  logic            VGA_HS    ,
     output  logic            VGA_VS
-);
+;
 
 //------------- Signals declaration                              -------------//
   //----------- Clocks                                           -----------//
@@ -40,6 +42,10 @@ module audio_nexys_a7 (
     logic         button_d, button_d_d, button_d_u;
     logic         button_l, button_l_d, button_l_u;
     logic         button_r, button_r_d, button_r_u;
+  //------------- MIDI
+    logic [7:0]   byte_data;
+    logic         byte_valid;
+    logic         frame_error;
   //----------- Audio management registers                       -----------//
     reg           play        ;
     reg  [3:0]    volume      ;
@@ -156,9 +162,9 @@ module audio_nexys_a7 (
       .button_d    ( button_d_d ),
       .button_r    ( button_r_d ),
       .button_l    ( button_l_d ),
-      .play        ( play       ),
-      .volume      ( volume     ),
-      .note_index  ( note_index )
+      // .play        ( play       ),
+      .volume      ( volume     )
+      // .note_index  ( note_index )
     );
 //____________________________________________________________________________//
 
@@ -268,7 +274,25 @@ module audio_nexys_a7 (
       .h_coord    ( h_coord   ), // horizontal pixel coordinate
       .v_coord    ( v_coord   )  // vertical pixel coordinate
     );
-
+//MIDI CONTROLLER
+    ps2_rx ps2_rx (
+    .clk         (clk_audio),
+    .rst_n       (aud_rst_n),
+    .ps2_clk     (PS2_CLK),
+    .ps2_data    (PS2_DATA),
+    .byte_data   (byte_data),
+    .byte_valid  (byte_valid),
+    .frame_error (frame_error)
+    );
+    
+    midi_decoder midi_decoder (
+    .clk        (clk_audio),
+    .rst_n      (aud_rst_n),
+    .midi_data  (byte_data),
+    .midi_valid (byte_valid),
+    .note_index (note_index),
+    .play       (play)
+    );
   //----------- VGA reg                                          -----------//
       always_ff @(posedge pixel_clk) begin
         if (disp_enbl == 1'b1) begin
@@ -286,4 +310,4 @@ module audio_nexys_a7 (
       end
 //____________________________________________________________________________//
 
-endmodule
+
