@@ -44,6 +44,10 @@ puts "NewLoc: $NewLoc"
 puts "PrjDir: $PrjDir"
 puts "TopName: $TopName"
 
+# Top module name is fixed: the repo folder can have any name (HackLab, audio_nexys_a7, ...)
+set TopModule "audio_nexys_a7"
+puts "TopModule: $TopModule"
+
 #Stage 2: Auto-complete part for path
 set PrjName $TopName.xpr
 set SrcDir $PrjDir/$TopName/src
@@ -73,6 +77,8 @@ set SrcVerTop [findFiles $SrcDir/top "*.v"]
 set SrcNGC [findFiles $SrcDir "*.ngc"]; #ISE format IP
 set SrcXCI [findFiles $SrcDir "*.xci"]; #Vivado IP format
 set SrcXDC [findFiles $SrcDir "*.xdc"]; #Vivado Design Constraint
+set SrcMem [findFiles $SrcDir/rtl "*.mem"]; #$readmemh init files (font, screen text)
+puts "SrcMem: $SrcMem"
 
 puts "SrcVHD: $SrcVHD"
 #puts "SrcVer: $SrcVer"
@@ -114,8 +120,10 @@ if {$SrcVerTop ne ""} {add_files $SrcVerTop}
 # add_files $SrcSVRtl $SrcVerRtl $SrcSVTop $SrcVerTop
 add_files -fileset constrs_1 -norecurse $SrcXDC
 add_files -fileset sim_1 -norecurse $SrcSim
+if {$SrcMem ne ""} {add_files -norecurse $SrcMem}
 
-set_property top $TopName [current_fileset]
+set_property top $TopModule [current_fileset]
+set_property top tb_audio_nexys_a7 [get_filesets sim_1]
 
 start_gui
 # Stage 7: Upgrade IP Cores (if needed)

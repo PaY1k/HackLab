@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module tb_audio_nexys_a7 ();
   bit               CLK100MHZ;
   bit     [15:0]    SW;
@@ -9,9 +11,12 @@ module tb_audio_nexys_a7 ();
   //
   logic             AUD_PWM;
   logic             AUD_SD;
-  
-  //----------- CLK -//
-    always #2
+  //
+  logic   [ 3:0]    VGA_R, VGA_G, VGA_B;
+  logic             VGA_HS, VGA_VS;
+
+  //----------- CLK: 100 MHz (period 10 ns) -//
+    always #5
       CLK100MHZ = ~CLK100MHZ;
 
   //----------- Main Initial -//

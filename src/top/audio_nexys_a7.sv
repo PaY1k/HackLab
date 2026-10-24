@@ -61,13 +61,9 @@ module audio_nexys_a7 (
     wire  [31:0]  sevseg_32bit_hex_val ;
     logic [ 3:0]  note_hex             ;   // note letter as a hex digit: C, D, E, F, 6 = G, A, b
     wire  [ 3:0]  octave_digit         ;   // octave number 1..8
-  //----------- VGA Controller                                   -----------//
-    wire  [10:0]  h_coord       ;   // pixel coordinates, 0..1055
-    wire  [ 9:0]  v_coord       ;   //                    0..627
-    wire  [ 3:0]  red, green, blue; // pixel color
-    // Timing signals - don't touch these:
-    wire          h_sync, v_sync;   // horizontal & vertical synchronization
-    wire          disp_enbl     ;   // image output is allowed
+  //----------- Switches synchronized to clk_audio               -----------//
+    (* ASYNC_REG = "TRUE" *) logic [2:0] sw_sync1, sw_sync2;
+    wire  [ 2:0]  octave        ;   // SW[2:0] in the clk_audio domain
 //____________________________________________________________________________//
 
 //------------- Clock & Reset                                      -----------//
@@ -147,6 +143,14 @@ module audio_nexys_a7 (
       .sw_down_o   ( button_d_d ),
       .sw_up_o     ( button_d_u )
     );
+  //----------- Switches: 2-FF synchronizer                      -----------//
+    // SW are asynchronous to clk_audio; feeding them straight into logic
+    // may cause rare glitches (metastability)
+    always_ff @( posedge clk_audio ) begin
+      sw_sync1 <= SW [2:0];
+      sw_sync2 <= sw_sync1;
+    end
+    assign octave = sw_sync2;
   //------------- Control logic                                  -----------//
     button_ctrl button_ctrl_inst (
       .clk         ( clk_audio  ),
@@ -204,7 +208,7 @@ module audio_nexys_a7 (
       .clk         ( clk_audio   ),
       .rst_n       ( aud_rst_n   ),
       .note_index  ( note_index  ),
-      .octave_sel  ( SW [2:0]    ),
+      .octave_sel  ( octave      ),
       .sample      ( sample      ),
       .valid       ( valid       ),
       .ready       ( ready       )
@@ -247,43 +251,36 @@ module audio_nexys_a7 (
     assign AUD_PWM = aud_pwm_loc ? 1'bz : 1'b0;
 //____________________________________________________________________________//
 
-//------------- VGA                                              -------------//
-  //----------- Picture: Sber logo, then text                    -----------//
-    vga_demo vga_demo (
-      .pixel_clk  ( pixel_clk ),
-      .rst_n      ( pix_rst_n ),
-      .h_coord    ( h_coord   ),
-      .v_coord    ( v_coord   ),
-      .red        ( red       ),
-      .green      ( green     ),
-      .blue       ( blue      )
+//------------- VGA: player screen                              -------------//
+    // status crosses to pixel_clk inside player_screen (cdc_bus)
+    player_screen player_screen (
+      .aud_clk      ( clk_audio          ),
+      .aud_rst_n    ( aud_rst_n          ),
+      .play         ( play               ),
+      .volume       ( volume             ),
+      .note_index   ( note_index         ),
+      .octave       ( octave             ),
+      .sample_valid ( fifo_rd_en         ),
+      .sample       ( fifo_rd_data[15:0] ),
+      .aud_en       ( AUD_SD             ),
+      .track_idx    ( 3'd0               ),
+      .len_bcd      ( 16'h0000           ),
+      .len_valid    ( 1'b0               ),
+      .progress     ( 10'd0              ),
+      .time_clear   ( 1'b0               ),
+      .pix_clk      ( pixel_clk          ),
+      .pix_rst_n    ( pix_rst_n          ),
+      .vga_r        ( VGA_R              ),
+      .vga_g        ( VGA_G              ),
+      .vga_b        ( VGA_B              ),
+      .vga_hs       ( VGA_HS             ),
+      .vga_vs       ( VGA_VS             ),
+      /* verilator lint_off PINCONNECTEMPTY */
+      .vga_de       (                    ),
+      .vga_h        (                    ),
+      .vga_v        (                    )
+      /* verilator lint_on PINCONNECTEMPTY */
     );
-  //----------- VGA controller (SVGA 800x600@60 timing)          -----------//
-    display_ctrl display_ctrl (
-      .pixel_clk  ( pixel_clk ), // Pixel clock 39.941 MHz
-      .rst_n      ( pix_rst_n ), // Active low synchronous reset
-      .h_sync     ( h_sync    ), // horizontal sync signal
-      .v_sync     ( v_sync    ), // vertical sync signal
-      .disp_enbl  ( disp_enbl ), // display enable (0 = all colors must be blank)
-      .h_coord    ( h_coord   ), // horizontal pixel coordinate
-      .v_coord    ( v_coord   )  // vertical pixel coordinate
-    );
-
-  //----------- VGA reg                                          -----------//
-      always_ff @(posedge pixel_clk) begin
-        if (disp_enbl == 1'b1) begin
-          VGA_R <= red  ;
-          VGA_B <= blue ;
-          VGA_G <= green;
-        end
-        else begin
-          VGA_R <= 4'd0;
-          VGA_B <= 4'd0;
-          VGA_G <= 4'd0;
-        end
-          VGA_HS <= h_sync;
-          VGA_VS <= v_sync;
-      end
 //____________________________________________________________________________//
 
 endmodule

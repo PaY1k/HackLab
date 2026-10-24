@@ -50,16 +50,56 @@ audio_nexys_a7/
     │   ├── pwm.sv                     ШИМ на аудиовыход
     │   ├── sevseg_ctrl.sv             семисегментные индикаторы
     │   ├── display_ctrl.sv            тайминги VGA 800×600@60
-    │   ├── vga_demo.sv                картинка на экране: логотип и текст
+    │   ├── player_screen.sv           всё между звуком и VGA: таймер, CDC статуса, осциллограф, интерфейс
+    │   ├── vga_ui.sv                  экран плеера (текст, осциллограф, пианино, прогресс, громкость)
+    │   ├── scope_capture.sv           буфер осциллографа с триггером и двойной буферизацией
+    │   ├── cdc_bus.sv                 передача статуса между клоковыми доменами (handshake)
+    │   ├── play_timer.sv              время воспроизведения mm:ss в BCD
+    │   ├── async_fifo.sv              асинхронный FIFO (Gray-указатели, BRAM) для SD / UART / CPU
+    │   ├── mem/font8x16.mem           шрифт 8×16 CP866 с кириллицей (tools/gen_font.py)
+    │   ├── mem/screen_text.mem        статичный текст экрана (tools/gen_screen.py)
+    │   ├── vga_demo.sv                старая демо-картинка (не используется)
     │   ├── sber_logo_rom.sv           логотип 128×128
-    │   └── font_rom.sv                шрифт 8×8
+    │   └── font_rom.sv                шрифт 8×8 (не используется)
     ├── ipcores/clk_wiz_0/       Clocking Wizard (clk_wiz_0.xci): клоки 49.159, 4.993 и 39.941 МГц
     ├── sim/                     симулятор на Verilator + SDL2
     │   ├── top_audio.sv         топ для симулятора (без PLL и дебаунсеров)
     │   ├── main_audio.cpp       окно, звук, клавиатура
     │   └── Makefile
     ├── tb/tb_audio_nexys_a7.sv  тестбенч для симулятора Vivado
+    ├── tb/tb_async_fifo.sv      самопроверяющийся тест async_fifo
+    ├── tb/tb_vga_ui.sv          рендер кадра vga_ui в файл (без Vivado)
     └── tcl/deploy.tcl           скрипт создания проекта Vivado
+tools/
+├── gen_font.py                  шрифт → src/rtl/mem/font8x16.mem
+├── gen_screen.py                надписи на экране → src/rtl/mem/screen_text.mem
+└── frame_to_png.py              кадр из tb_vga_ui → PNG
 ```
 
-Новые RTL-файлы кладите в `src/rtl/`: `deploy.tcl` добавляет в проект всё, что лежит в `src/rtl/` и `src/top/`. Если файл добавлен после `make deploy`, запустите `make deploy` ещё раз или добавьте файл в проект вручную в Vivado.
+## Экран плеера
+
+![Экран плеера: нота A6 (пила) на осциллографе, громкость 12/15](doc/image/ui_play.png)
+
+Кадр получен моделированием всего тракта симулятора (`src/sim/top_audio.sv`) в Icarus Verilog. Ещё есть [пауза](doc/image/ui_pause.png) и [заставка](doc/image/ui_splash.png).
+
+Надписи меняются в `tools/gen_screen.py` (там же список ячеек, которые экран обновляет сам), затем:
+
+```bash
+python3 tools/gen_screen.py        # нужен Python 3; для gen_font.py ещё pip install pillow
+```
+
+Посмотреть кадр без платы и без Vivado (Icarus Verilog, ~1 минута):
+
+```bash
+iverilog -g2012 -o /tmp/ui -s tb_vga_ui src/rtl/display_ctrl.sv src/rtl/sber_logo_rom.sv src/rtl/vga_ui.sv src/tb/tb_vga_ui.sv
+cd src/rtl/mem && vvp -n /tmp/ui +FRAMES=2 +OUT=/tmp/frame.txt && cd -
+python3 tools/frame_to_png.py /tmp/frame.txt frame.png
+```
+
+Тест асинхронного FIFO:
+
+```bash
+iverilog -g2012 -o /tmp/fifo src/rtl/async_fifo.sv src/tb/tb_async_fifo.sv && vvp -n /tmp/fifo
+```
+
+Новые RTL-файлы кладите в `src/rtl/`: `deploy.tcl` добавляет в проект всё, что лежит в `src/rtl/` и `src/top/`, включая файлы `*.mem` из `src/rtl/`. Папка репозитория может называться как угодно: top-модуль задан в `deploy.tcl` явно. Если файл добавлен после `make deploy`, запустите `make deploy` ещё раз или добавьте файл в проект вручную в Vivado.

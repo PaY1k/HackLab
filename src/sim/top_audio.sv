@@ -146,43 +146,39 @@ module top_audio (
     assign sevseg_32bit_hex_val = {24'b0, note_hex, octave_digit};
 //____________________________________________________________________________//
 
-//------------- VGA                                              -------------//
-    wire  [10:0]  h_coord          ;
-    wire  [ 9:0]  v_coord          ;
-    wire  [ 3:0]  red, green, blue ;
-    wire          disp_enbl        ;
-
-    vga_demo vga_demo (
-      .pixel_clk  ( pixel_clk ),
-      .rst_n      ( ~sim_rst  ),
-      .h_coord    ( h_coord   ),
-      .v_coord    ( v_coord   ),
-      .red        ( red       ),
-      .green      ( green     ),
-      .blue       ( blue      )
-    );
-
-    display_ctrl display_ctrl (
-      .pixel_clk  ( pixel_clk ),
-      .rst_n      ( ~sim_rst  ),
+//------------- VGA: player screen (the same module as on the board) -------//
+    player_screen #(
+      .FONT_FILE    ( "../rtl/mem/font8x16.mem"   ),   // the sim runs from src/sim
+      .TEXT_FILE    ( "../rtl/mem/screen_text.mem" ),
+      .SPLASH_LOG2  ( 26                          )    // shorter splash: the sim is slower
+    ) player_screen (
+      .aud_clk      ( clk                ),
+      .aud_rst_n    ( ~sim_rst           ),
+      .play         ( play               ),
+      .volume       ( volume             ),
+      .note_index   ( note_index         ),
+      .octave       ( { sw2, sw1, sw0 }  ),
+      .sample_valid ( fifo_rd_en         ),
+      .sample       ( fifo_rd_data[15:0] ),
+      .aud_en       ( aud_en             ),
+      .track_idx    ( 3'd0               ),
+      .len_bcd      ( 16'h0000           ),
+      .len_valid    ( 1'b0               ),
+      .progress     ( 10'd0              ),
+      .time_clear   ( 1'b0               ),
+      .pix_clk      ( pixel_clk          ),
+      .pix_rst_n    ( ~sim_rst           ),
+      .vga_r        ( sdl_r              ),
+      .vga_g        ( sdl_g              ),
+      .vga_b        ( sdl_b              ),
       /* verilator lint_off PINCONNECTEMPTY */
-      .h_sync     (           ),  // the sim draws by coordinates, sync is not needed
-      .v_sync     (           ),
+      .vga_hs       (                    ),   // the sim draws by coordinates
+      .vga_vs       (                    ),
       /* verilator lint_on PINCONNECTEMPTY */
-      .disp_enbl  ( disp_enbl ),
-      .h_coord    ( h_coord   ),
-      .v_coord    ( v_coord   )
+      .vga_de       ( sdl_de             ),
+      .vga_h        ( sdl_sx             ),
+      .vga_v        ( sdl_sy             )
     );
-
-    // the same register as VGA_R/G/B in the board top, plus coordinates for the sim
-    always_ff @( posedge pixel_clk ) begin
-      sdl_sx <= h_coord  ;
-      sdl_sy <= v_coord  ;
-      sdl_de <= disp_enbl;
-      sdl_r  <= red      ;
-      sdl_g  <= green    ;
-      sdl_b  <= blue     ;
-    end
 //____________________________________________________________________________//
 
 endmodule
