@@ -81,7 +81,7 @@ def main():
             img[off:off + len(chunk)] = chunk
 
     # TONE1: 1000 Hz, 16 bit mono 48 kHz, with a LIST chunk (odd size -> pad byte)
-    n0 = int(48000 * 1.2)
+    n0 = 600 if "--short" in sys.argv else int(48000 * 1.2)
     s0 = [int(round(12000 * math.sin(2 * math.pi * 1000 * i / 48000))) for i in range(n0)]
     lst = b"LIST" + struct.pack("<I", 7) + b"INFOabc" + b"\x00"
     f0 = wav(s0, 48000, 16, 1, lst)
@@ -89,7 +89,7 @@ def main():
     put(f0, c0)
 
     # CHORD: 8 bit stereo 22050 Hz, left 440 Hz, right 660 Hz
-    n1 = int(22050 * 0.1)
+    n1 = 300 if "--short" in sys.argv else int(22050 * 0.1)
     s1 = []
     for i in range(n1):
         s1.append(128 + int(round(60 * math.sin(2 * math.pi * 440 * i / 22050))))

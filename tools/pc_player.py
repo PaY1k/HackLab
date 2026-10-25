@@ -30,16 +30,10 @@ import sys
 import threading
 import time
 
-BAUD = 921600
-CREDIT_BYTE = 0xC1
-CREDIT_SIZE = 255
-
-T_AUDIO, T_MIDI, T_TITLE, T_ALL_OFF, T_HELLO = 1, 2, 3, 4, 5
-
-
-def packet(ptype, payload=b""):
-    assert len(payload) <= 255
-    return bytes([0xA5, ptype, len(payload)]) + bytes(payload)
+from pc_protocol import (
+    BAUD, HELLO_ACK, CREDIT_BYTE, CREDIT_SIZE, T_AUDIO, T_TITLE, T_ALL_OFF, T_HELLO,
+    packet, midi_packet, text_packet,
+)
 
 
 def find_port():
@@ -66,17 +60,25 @@ class Link:
         self.credits = 0
         self.cv = threading.Condition()
         self.alive = True
+        self.ready = threading.Event()
         threading.Thread(target=self._reader, daemon=True).start()
         self.send(packet(T_HELLO))
+        if not self.ready.wait(3):
+            self.alive = False
+            self.ser.close()
+            raise RuntimeError("No board handshake at 921600 baud. Load the unified firmware and check --port.")
 
     def _reader(self):
         while self.alive:
             data = self.ser.read(64)
-            n = data.count(CREDIT_BYTE)
-            if n:
-                with self.cv:
-                    self.credits += n
-                    self.cv.notify_all()
+            with self.cv:
+                for byte in data:
+                    if byte == HELLO_ACK:
+                        self.credits = 0
+                        self.ready.set()
+                    elif byte == CREDIT_BYTE and self.ready.is_set():
+                        self.credits += 1
+                self.cv.notify_all()
 
     def send(self, data):
         with self.lock:
@@ -131,10 +133,9 @@ def midi_thread(link, name):
     print(f"MIDI: {name}")
     with mido.open_input(name) as inp:
         for msg in inp:
-            if msg.type in ("note_on", "note_off"):
-                link.send(packet(T_MIDI, msg.bytes()[:3]))
-            elif msg.type == "control_change" and msg.control in (120, 123):
-                link.send(packet(T_ALL_OFF))
+            data = midi_packet(msg)
+            if data is not None:
+                link.send(data)
 
 
 def main():
@@ -142,6 +143,7 @@ def main():
     ap.add_argument("file", nargs="?", help="audio file to stream (any format ffmpeg reads)")
     ap.add_argument("--port", help="serial port of the board (default: auto)")
     ap.add_argument("--midi", metavar="NAME", help="MIDI input name or 'auto'")
+    ap.add_argument("--set", action="append", default=[], help="synth setting, e.g. WAVE SAW")
     ap.add_argument("--loop", action="store_true", help="repeat the file")
     ap.add_argument("--list", action="store_true", help="show serial ports and MIDI inputs")
     args = ap.parse_args()
@@ -164,6 +166,8 @@ def main():
     link = Link(args.port or find_port())
     print(f"port {link.ser.port}, {BAUD} baud")
     try:
+        for setting in args.set:
+            link.send(text_packet(f"SET {setting}"))
         if args.midi:
             t = threading.Thread(target=midi_thread, args=(link, args.midi), daemon=True)
             t.start()

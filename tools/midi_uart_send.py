@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
-"""Reference / test sender for the text MIDI protocol of the board
-(src/rtl/midi_text_rx.sv, UART 115200 8N1, one command per line):
-
-    ON <note> <velocity>\\n     OFF <note>\\n     OFF\\n (all notes off)
-    BEND <-8192..8191>       CC <control> <value>     SET <name> <value>
-
-The board also understands str(msg) from mido ("note_on channel=0 note=60
-velocity=100 time=0") and bare "60 100" / "60 0", so your own program may
-send any of these.
+"""MIDI and synth settings over the shared binary protocol, UART 921600 8N1.
+Audio and keyboard together: use pc_player.py song.mp3 --midi auto.
+The --line and --set commands are encapsulated in type-6 binary packets.
 
 Works on Windows, Linux, macOS:
     pip install pyserial mido python-rtmidi
@@ -28,7 +22,7 @@ import argparse
 import sys
 import time
 
-BAUD = 115200
+from pc_protocol import BAUD, T_MIDI, T_ALL_OFF, packet, text_packet, midi_packet
 
 
 def open_port(name):
@@ -37,7 +31,7 @@ def open_port(name):
 
 
 def send(ser, line, echo=True):
-    ser.write((line + "\n").encode("ascii"))
+    ser.write(text_packet(line))
     if echo:
         print(line)
 
@@ -76,13 +70,13 @@ def main():
             time.sleep(0.01)
         if args.scale:
             for n in (60, 62, 64, 65, 67, 69, 71, 72):
-                send(ser, f"ON {n} 100")
+                ser.write(packet(T_MIDI, [0x90, n, 100]))
                 time.sleep(0.3)
-                send(ser, f"OFF {n}")
+                ser.write(packet(T_MIDI, [0x80, n, 0]))
             for n in (60, 64, 67):                     # chord: 3 voices at once
-                send(ser, f"ON {n} 100")
+                ser.write(packet(T_MIDI, [0x90, n, 100]))
             time.sleep(1.0)
-            send(ser, "OFF")
+            ser.write(packet(T_ALL_OFF))
         if args.midi:
             import mido
             names = mido.get_input_names()
@@ -92,18 +86,13 @@ def main():
             print(f"MIDI: {name}, Ctrl+C to stop")
             with mido.open_input(name) as inp:
                 for msg in inp:
-                    if msg.type == "note_on" and msg.velocity > 0:
-                        send(ser, f"ON {msg.note} {msg.velocity}")
-                    elif msg.type in ("note_on", "note_off"):
-                        send(ser, f"OFF {msg.note}")
-                    elif msg.type == "pitchwheel":
-                        send(ser, f"BEND {msg.pitch}")
-                    elif msg.type == "control_change":
-                        send(ser, f"CC {msg.control} {msg.value}")
+                    data = midi_packet(msg)
+                    if data is not None:
+                        ser.write(data)
     except KeyboardInterrupt:
         pass
     finally:
-        send(ser, "OFF", echo=False)
+        ser.write(packet(T_ALL_OFF))
         ser.close()
 
 

@@ -167,6 +167,7 @@ module sd_card #(
           sd_reset   <= 1'b0;
           sd_cs      <= 1'b1;
           fast       <= 1'b0;
+          card_sdhc  <= 1'b0;
           card_ready <= 1'b0;
           rd_busy    <= 1'b0;
           wait_cnt   <= wait_cnt + 1'b1;
@@ -207,12 +208,13 @@ module sd_card #(
 
         // R7: 4 more bytes after R1; illegal command -> SD v1 card
         CMD8_R: begin
-          if ( r1[2] ) begin
+          if ( r1 == 8'h05 ) begin
             sdv1  <= 1'b1;
             tries <= '0;
             st    <= END_CS;  ret_st <= ACMD55;
             sd_cs <= 1'b1;    xfer( 8'hFF );
           end
+          else if ( r1 != 8'h01 ) st <= FAIL;
           else if ( x_done || n == 8'd0 ) begin
             if ( n != 8'd0 ) resp <= { resp[23:0], x_rx };
             if ( n == 8'd4 ) begin
@@ -259,12 +261,14 @@ module sd_card #(
           cmd <= frame( 6'd58, 32'h0, 8'hFD );  ret_st <= CMD58_R;  st <= C_FF;  sd_cs <= 1'b0;  xfer( 8'hFF );
         end
 
-        CMD58_R: if ( x_done || n == 8'd0 ) begin
+        CMD58_R: if ( r1 != 8'h00 ) st <= FAIL;
+        else if ( x_done || n == 8'd0 ) begin
           if ( n != 8'd0 ) resp <= { resp[23:0], x_rx };
           if ( n == 8'd4 ) begin
             card_sdhc <= resp[22];             // byte 1 bit 6 = CCS (resp holds 3 bytes + x_rx)
             n  <= '0;
-            st <= END_CS;  if ( resp[22] ) ret_st <= INIT_OK; else ret_st <= CMD16;
+            if (resp[23]) st <= END_CS; else st <= FAIL;
+            if ( resp[22] ) ret_st <= INIT_OK; else ret_st <= CMD16;
             sd_cs <= 1'b1;  xfer( 8'hFF );
           end
           else begin
@@ -281,7 +285,8 @@ module sd_card #(
 
         CMD16_R: begin
           n  <= '0;
-          st <= END_CS;  ret_st <= INIT_OK;
+          if (r1 == 8'h00) st <= END_CS; else st <= FAIL;
+          ret_st <= INIT_OK;
           sd_cs <= 1'b1;  xfer( 8'hFF );
         end
 

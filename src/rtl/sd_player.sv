@@ -101,7 +101,10 @@ module sd_player #(
   logic [31:0] data_size, data_done;
   logic [ 7:0] lo_b;
   logic signed [15:0] left_s;
+  logic        fmt_pcm_guid;
+  logic        fmt_seen;
   logic        fmt_bad;
+  logic        loop_restart;        // reset WAV parser without discarding queued audio
   logic        data_started;        // pulse: data chunk found
 
   wire         stereo = ( fmt_ch == 16'd2 );
@@ -137,6 +140,8 @@ module sd_player #(
       lo_b         <= '0;
       left_s       <= '0;
       fmt_bad      <= 1'b0;
+      fmt_seen     <= 1'b0;
+      fmt_pcm_guid <= 1'b0;
       data_started <= 1'b0;
       fifo_wr      <= 1'b0;
       fifo_data    <= '0;
@@ -144,11 +149,18 @@ module sd_player #(
     else begin
       fifo_wr      <= 1'b0;
       data_started <= 1'b0;
-      if ( fifo_flush ) begin                 // new file
+      if ( fifo_flush || loop_restart ) begin                 // new file
         wst       <= W_RIFF;
         w_cnt     <= 32'd12;
         w_hi      <= '0;
         fmt_bad   <= 1'b0;
+        fmt_seen  <= 1'b0;
+        fmt_pcm_guid <= 1'b0;
+        fmt_tag   <= '0;
+        fmt_rate  <= '0;
+        fmt_brate <= '0;
+        fmt_ch    <= '0;
+        fmt_bits  <= '0;
         data_done <= '0;
         bi        <= '0;
         chn       <= 1'b0;
@@ -181,17 +193,20 @@ module sd_player #(
               if ( w_id == "fmt " ) begin
                 wst   <= W_FMT;
                 fmt_i <= '0;
+                fmt_seen <= ({ wav_b, w_size[31:8] } >= 32'd16);
+                fmt_pcm_guid <= ({ wav_b, w_size[31:8] } >= 32'd40);
                 w_cnt <= { wav_b, w_size[31:8] } + { 31'd0, w_size[8] };   // + pad byte if odd
               end
               else if ( w_id == "data" ) begin
-                wst          <= W_DATA;
+                if ({ wav_b, w_size[31:8] } == 0) wst <= W_END; else wst <= W_DATA;
                 w_cnt        <= { wav_b, w_size[31:8] };
                 data_size    <= { wav_b, w_size[31:8] };
                 data_started <= 1'b1;
                 bi           <= '0;
                 chn          <= 1'b0;
-                // integer PCM (1, or 0xFFFE extensible), mono / stereo, 8/16/24/32 bit
-                fmt_bad      <= !( ( fmt_tag == 16'd1 || fmt_tag == 16'hFFFE ) &&
+                // Integer PCM, mono/stereo, 8/16/24/32 bit, up to 48 kHz.
+                fmt_bad      <= !( fmt_seen && fmt_rate != 0 && fmt_rate <= 48000 &&
+                                   fmt_brate != 0 && ( fmt_tag == 16'd1 || (fmt_tag == 16'hFFFE && fmt_pcm_guid) ) &&
                                    ( fmt_ch == 16'd1 || fmt_ch == 16'd2 ) &&
                                    ( fmt_bits == 16'd8 || fmt_bits == 16'd16 ||
                                      fmt_bits == 16'd24 || fmt_bits == 16'd32 ) );
@@ -215,6 +230,17 @@ module sd_player #(
               6'd8:  fmt_brate[7:0]  <= wav_b;   6'd9:  fmt_brate[15:8]  <= wav_b;
               6'd10: fmt_brate[23:16]<= wav_b;   6'd11: fmt_brate[31:24] <= wav_b;
               6'd14: fmt_bits[7:0]   <= wav_b;   6'd15: fmt_bits[15:8]   <= wav_b;
+              // WAVE_FORMAT_EXTENSIBLE: only KSDATAFORMAT_SUBTYPE_PCM.
+              6'd24: if (wav_b != 8'h01) fmt_pcm_guid <= 1'b0;
+              6'd25, 6'd26, 6'd27, 6'd28, 6'd29, 6'd31, 6'd33, 6'd34:
+                      if (wav_b != 0) fmt_pcm_guid <= 1'b0;
+              6'd30: if (wav_b != 8'h10) fmt_pcm_guid <= 1'b0;
+              6'd32: if (wav_b != 8'h80) fmt_pcm_guid <= 1'b0;
+              6'd35: if (wav_b != 8'hAA) fmt_pcm_guid <= 1'b0;
+              6'd36: if (wav_b != 8'h00) fmt_pcm_guid <= 1'b0;
+              6'd37: if (wav_b != 8'h38) fmt_pcm_guid <= 1'b0;
+              6'd38: if (wav_b != 8'h9B) fmt_pcm_guid <= 1'b0;
+              6'd39: if (wav_b != 8'h71) fmt_pcm_guid <= 1'b0;
               default: ;
             endcase
             w_cnt <= w_cnt - 1'b1;
@@ -312,7 +338,7 @@ module sd_player #(
     end
     else begin
       div_start <= 1'b0;
-      if ( fifo_flush ) begin
+      if ( fifo_flush || loop_restart ) begin
         len_valid <= 1'b0;
         progress  <= '0;
       end
@@ -363,8 +389,9 @@ module sd_player #(
 
   // samples per output tick: rate / 48006.5 * 65536 = rate * 89466 / 65536
   wire [34:0] step_full = 35'( fmt_rate[17:0] ) * 35'd89466;
-  always_ff @( posedge clk )
-    step <= ( step_full[34:16] > 19'd65535 ) ? 16'hFFFF : step_full[31:16];
+  always_ff @( posedge clk or negedge rst_n )
+    if (!rst_n) step <= 16'd65527;
+    else if (data_started && !fmt_bad) step <= ( step_full[34:16] > 19'd65535 ) ? 16'hFFFF : step_full[31:16];
 //____________________________________________________________________________//
 
 //------------- Main FSM                                         -------------//
@@ -484,6 +511,7 @@ module sd_player #(
       file_left  <= '0;
       fifo_flush <= 1'b0;
       flush_cnt  <= '0;
+      loop_restart <= 1'b0;
       for ( int f = 0; f < MAX_FILES; f++ ) begin
         f_clus[f] <= '0;
         f_size[f] <= '0;
@@ -492,6 +520,7 @@ module sd_player #(
     end
     else begin
       rd_req <= 1'b0;
+      loop_restart <= 1'b0;
 
       // FIFO flush: 2 clocks
       if ( flush_cnt != 0 ) flush_cnt <= flush_cnt - 1'b1;
@@ -640,12 +669,12 @@ module sd_player #(
             status    <= ST_READY;
             fst       <= F_IDLE;                           // F_IDLE takes a pending start
           end
-          else if ( fmt_bad ) begin
+          else if ( fmt_bad || (file_left == 0 && wst != W_END) ) begin
             status <= ST_FMTERR;
             fst    <= F_IDLE;
           end
           else if ( file_left == 32'd0 || wst == W_END ) begin
-            flush_cnt <= 2'd2;                             // end of file: play it again
+            loop_restart <= 1'b1;                         // keep the tail queued for playback
             fst       <= F_PSTART;
           end
           else if ( sec_i == spc - 1'b1 ) begin
@@ -663,7 +692,7 @@ module sd_player #(
 
         F_FAT_DATA: begin
           if ( eoc ) begin
-            flush_cnt <= 2'd2;
+            loop_restart <= 1'b1;
             fst       <= F_PSTART;
           end
           else begin

@@ -14,7 +14,7 @@
 | 02 | Коробейники | мелодия из блочной памяти (BRAM) |
 | 03 | Ода к радости | мелодия из BRAM |
 | 04, 05 | первые два файла `*.WAV` с microSD | FAT32, WAV 8/16 бит, моно/стерео, любая частота дискретизации |
-| 06 | поток с ПК | любой файл (MP3 тоже), ПК декодирует и шлёт по USB-UART (бинарный режим, `PC_TEXT_MIDI = 0`) |
+| 06 | поток с ПК | любой файл (MP3 тоже), ПК декодирует и шлёт по USB-UART (бинарный режим, `921600 baud, unified packets`) |
 | — | MIDI-клавиатура | через ПК текстом по UART 115200, 8-голосный настраиваемый синтезатор поверх любого трека |
 
 Качество звука:
@@ -92,7 +92,7 @@ tools/prepare_sd.sh /media/$USER/SDCARD "мой трек.mp3=CARTI" другой
 
 ## MIDI-клавиатура через ПК (UART)
 
-Клавиатура подключена к Windows-ПК, программа на Python шлёт ноты на плату текстом по USB-UART: **115200 бод, 8N1, одна команда на строку** (конец строки `\n`, `\r` или `;`, регистр не важен):
+MIDI and commands use the unified **921600 baud, 8N1 binary packet protocol**. The following command strings are payloads of type-6 packets, terminated by a newline; they are not sent as raw UART text.
 
 | Строка | Действие |
 |---|---|
@@ -127,7 +127,7 @@ python tools\midi_uart_send.py --port COM5 --set "WAVE SAW" --set "RELEASE 12"
 
 Светодиоды платы для отладки: **LD0** — пришёл байт по UART, **LD1** — команда понята, **LD2** — звучит нота, **LD3** — SD-карта готова. Если LD0 мигает, а LD1 нет — строки приходят, но в другом формате.
 
-Бинарный протокол на 921600 бод с потоком звука (`tools/pc_player.py`, трек 06) включается параметром `PC_TEXT_MIDI = 0` в `src/rtl/player_top.sv`.
+Both senders use the unified 921600-baud packet protocol; see the update below. No compile-time protocol selector remains.
 
 ## Как устроено
 
@@ -213,3 +213,25 @@ python3 tools/frame_to_png.py /tmp/frame.txt frame.png
 ```
 
 Новые RTL-файлы кладите в `src/rtl/`: `deploy.tcl` добавляет в проект всё из `src/rtl/` и `src/top/`, включая `*.mem`. Папка репозитория может называться как угодно.
+
+## Unified UART firmware update
+
+Both Python senders now use the same binary framing at **921600 baud, 8N1**.
+Rebuild and load this firmware once. No firmware switch is needed between MIDI and audio.
+Run audio and MIDI together in a single process (one owner of the COM port):
+
+```powershell
+python tools/pc_player.py song.mp3 --port COM5 --midi auto --set "WAVE SAW"
+```
+
+Select track 06 and press Play. MIDI alone: `python tools/midi_uart_send.py --port COM5 --midi auto`.
+The old raw-text/115200 instructions above are superseded by this update.
+Packet layout: `A5 type length payload`. Types: 1 audio, 2 MIDI notes, 3 title,
+4 all notes off, 5 hello, 6 ASCII command including newline (settings/bend/CC).
+The common sender implementation is `tools/pc_protocol.py`. Hello response `C2`
+resets host credits; each subsequent `C1` permits 255 audio bytes.
+
+SD playback now preserves queued samples when looping instead of erasing the tail.
+`make test-sd-loop` checks a paused/slow consumer, short-file loops and file changes.
+WAV support: integer PCM (including PCM extensible), 8/16/24/32-bit mono/stereo,
+up to 48 kHz. Float WAV and higher rates must be converted with `tools/prepare_sd.sh`.

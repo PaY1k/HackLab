@@ -83,3 +83,16 @@ clear:
 
 clean:
 	rm -rf *.jou *.log
+.PHONY: test-link-system test-sd-loop
+# Unified UART through the whole player
+test-link-system:
+	@mkdir -p $(B)
+	iverilog -g2012 -o $(B)/ms -s tb_midi_system src/rtl/*.sv src/tb/tb_midi_system.sv
+	cd src/rtl/mem && vvp -n ../../../$(B)/ms +OUT=../../../$(B)/ms.txt
+
+# Slow consumer: short WAV loops must preserve queued samples
+test-sd-loop:
+	@mkdir -p $(B)/sd-short
+	python3 tools/make_sd_image.py $(B)/sd-short/sd --short
+	iverilog -g2012 -o $(B)/sd-short/fixed -s tb_sd_loop src/rtl/sd_card.sv src/rtl/sd_player.sv src/rtl/async_fifo.sv src/tb/sd_card_model.sv src/tb/tb_sd_loop.sv
+	cd $(B)/sd-short && vvp -n fixed

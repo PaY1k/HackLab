@@ -7,7 +7,9 @@
 //   type 3  title: up to 18 CP866 characters, shown in the playlist
 //   type 4  all MIDI notes off
 //   type 5  hello: the PC (re)started, forget credits given earlier
+//   type 6  ASCII command line, including newline (settings / bend / CC)
 // board -> PC:
+//   0xC2    hello acknowledgement: discard old credits before accepting new ones
 //   0xC1    credit: the PC may send 255 more audio bytes
 //
 // Credits keep the audio FIFO from overflowing: one is sent whenever the FIFO
@@ -33,13 +35,19 @@ module pc_link #(
     input  wire        [ 4:0] title_idx     ,
     output wire        [ 7:0] title_char    ,
     output logic              title_valid   ,   // a title was received
-    output logic              title_changed     // pulse
+    output logic              title_changed,    // pulse
+    output logic [7:0]         text_data,
+    output logic              text_valid,
+    output wire               rx_activity,
+    output wire               session_reset
 );
 
 //------------- UART                                             -------------//
   wire  [7:0] rx_data;
   wire        rx_valid;
+  assign rx_activity = rx_valid;
   logic       tx_start;
+  logic [7:0] tx_data;
   wire        tx_busy;
 
   uart_rx #( .CLKS_PER_BIT ( CLKS_PER_BIT ) ) uart_rx (
@@ -47,7 +55,7 @@ module pc_link #(
   );
 
   uart_tx #( .CLKS_PER_BIT ( CLKS_PER_BIT ) ) uart_tx (
-    .clk ( clk ), .rst_n ( rst_n ), .data ( 8'hC1 ), .start ( tx_start ), .busy ( tx_busy ), .tx ( uart_tx_pin )
+    .clk ( clk ), .rst_n ( rst_n ), .data ( tx_data ), .start ( tx_start ), .busy ( tx_busy ), .tx ( uart_tx_pin )
   );
 //____________________________________________________________________________//
 
@@ -58,12 +66,14 @@ module pc_link #(
   logic [7:0] midi_b [0:2];
   logic [7:0] title [0:17];
   logic       hello;
+  assign session_reset = hello;
   logic       audio_byte;
 
   assign title_char = ( title_idx < 5'd18 ) ? title[title_idx] : 8'h20;
 
   always_ff @( posedge clk or negedge rst_n ) begin
     if ( !rst_n ) begin
+      text_data     <= '0;
       pst           <= P_SYNC;
       ptype         <= '0;
       plen          <= '0;
@@ -78,6 +88,7 @@ module pc_link #(
       title_changed <= 1'b0;
       hello         <= 1'b0;
       audio_byte    <= 1'b0;
+      text_valid    <= 1'b0;
       for ( int i = 0; i < 3; i++ )  midi_b[i] <= '0;
       for ( int i = 0; i < 18; i++ ) title[i]  <= 8'h20;
     end
@@ -89,6 +100,7 @@ module pc_link #(
       title_changed <= 1'b0;
       hello         <= 1'b0;
       audio_byte    <= 1'b0;
+      text_valid    <= 1'b0;
 
       if ( rx_valid ) begin
         case ( pst )
@@ -121,17 +133,18 @@ module pc_link #(
               end
               8'd2: if ( pidx < 8'd3 ) midi_b[pidx[1:0]] <= rx_data;
               8'd3: if ( pidx < 8'd18 ) title[pidx[4:0]] <= rx_data;
+              8'd6: begin text_data <= rx_data; text_valid <= 1'b1; end
               default: ;
             endcase
             if ( pidx == plen - 1'b1 ) begin              // last byte of the packet
               pst <= P_SYNC;
-              if ( ptype == 8'd2 ) begin
+              if ( ptype == 8'd2 && plen == 8'd3 && !midi_b[1][7] && !rx_data[7] ) begin
                 // midi_b[2] is this byte, not stored yet
                 midi_note <= midi_b[1][6:0];
                 case ( midi_b[0][7:4] )
                   4'h9:    if ( rx_data != 8'd0 ) midi_on <= 1'b1; else midi_off <= 1'b1;
                   4'h8:    midi_off <= 1'b1;
-                  4'hB:    if ( midi_b[1] == 8'd123 ) midi_all_off <= 1'b1;
+                  4'hB:    if ( midi_b[1] == 8'd123 || midi_b[1] == 8'd120 ) midi_all_off <= 1'b1;
                   default: ;
                 endcase
               end
@@ -152,20 +165,34 @@ module pc_link #(
   localparam [FIFO_AW+1:0] DEPTH  = 1 << FIFO_AW;
   localparam [FIFO_AW+1:0] CREDIT = 255;
 
+  logic link_active, ack_pending;
   logic [FIFO_AW+1:0] promised;           // audio bytes allowed but not received yet
   wire  [FIFO_AW+1:0] used = { 1'b0, fifo_level } + promised;
 
   always_ff @( posedge clk or negedge rst_n ) begin
     if ( !rst_n ) begin
       promised <= '0;
+      link_active <= 1'b0;
+      ack_pending <= 1'b0;
+      tx_data <= 8'hC1;
       tx_start <= 1'b0;
     end
     else begin
       tx_start <= 1'b0;
-      if ( hello )
+      if ( hello ) begin
         promised <= '0;
-      else if ( !tx_busy && !tx_start && used + CREDIT <= DEPTH ) begin
+        link_active <= 1'b0;
+        ack_pending <= 1'b1;
+      end
+      else if (ack_pending && !tx_busy && !tx_start) begin
+        tx_data <= 8'hC2;
         tx_start <= 1'b1;
+        ack_pending <= 1'b0;
+        link_active <= 1'b1;
+      end
+      else if ( link_active && !tx_busy && !tx_start && used + CREDIT <= DEPTH ) begin
+        tx_start <= 1'b1;
+        tx_data <= 8'hC1;
         promised <= promised + CREDIT - ( audio_byte && promised != 0 );
       end
       else if ( audio_byte && promised != 0 )

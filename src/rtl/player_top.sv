@@ -12,10 +12,7 @@
 // Tracks: 0 synth, 1-2 melodies (BRAM), 3-4 WAV files from SD, 5 stream from PC.
 // Switches: SW[2:0] octave, SW14 synth settings menu, SW15 BTNL/BTNR play notes.
 //
-// USB-UART from the PC, PC_TEXT_MIDI selects the protocol:
-//   1: text MIDI commands at 115200 baud ("ON 60 100", "OFF 60", mido str(msg)...),
-//      see midi_text_rx.sv - for a Python program that sends notes from a keyboard
-//   0: binary packets at 921600 baud from tools/pc_player.py (audio stream + MIDI)
+// USB-UART: one packet protocol at 921600 baud for audio, MIDI and settings.
 module player_top #(
     parameter  FONT_FILE   = "font8x16.mem",
     parameter  TEXT_FILE   = "screen_text.mem",
@@ -27,8 +24,7 @@ module player_top #(
     parameter  SPRITE_FILE = "sprite.mem",
     parameter  SPLASH_LOG2 = 27,
     parameter  SD_WAIT_BITS = 24,
-    parameter  PC_TEXT_MIDI = 1,
-    parameter  TEXT_CLKS_PER_BIT = 427     // 49.15865 MHz / 115200
+    parameter  PC_CLKS_PER_BIT = 53       // 49.15865 MHz / 921600
 )(
   //--------- Clocks / resets                    --------//
     input  wire          aud_clk    ,   // 49.15865 MHz
@@ -150,72 +146,37 @@ module player_top #(
     .params    ( synth_params )
   );
 
-  generate
-    if ( PC_TEXT_MIDI ) begin : g_text_midi
-      wire [7:0] rx_byte;
-      wire       rx_valid;
+  wire [7:0] text_byte;
+  wire text_valid, text_on, text_off, text_all, text_ok;
+  wire [6:0] text_note, packet_note;
+  wire packet_on, packet_off, packet_all, pc_session_reset;
 
-      uart_rx #( .CLKS_PER_BIT ( TEXT_CLKS_PER_BIT ) ) uart_rx_text (
-        .clk ( aud_clk ), .rst_n ( aud_rst_n ), .rx ( uart_rx ), .data ( rx_byte ), .valid ( rx_valid )
-      );
+  midi_text_rx midi_text_rx (
+    .clk(aud_clk), .rst_n(aud_rst_n), .rx_data(text_byte), .rx_valid(text_valid),
+    .midi_on(text_on), .midi_off(text_off), .midi_note(text_note), .midi_all_off(text_all),
+    .bend(bend), .mod_wheel(mod_wheel), .set_valid(set_valid), .set_idx(set_idx),
+    .set_val(set_val), .cmd_ok(text_ok)
+  );
+  pc_link #(.CLKS_PER_BIT(PC_CLKS_PER_BIT)) pc_link (
+    .clk(aud_clk), .rst_n(aud_rst_n), .uart_rx_pin(uart_rx), .uart_tx_pin(uart_tx),
+    .fifo_wr(pc_wr), .fifo_data(pc_wdata), .fifo_level(pc_level),
+    .midi_on(packet_on), .midi_off(packet_off), .midi_note(packet_note),
+    .midi_all_off(packet_all), .title_idx(pc_title_idx), .title_char(pc_title_char),
+    .title_valid(pc_title_valid), .title_changed(pc_title_chg),
+    .text_data(text_byte), .text_valid(text_valid), .rx_activity(rx_activity),
+    .session_reset(pc_session_reset)
+  );
+  assign midi_on = packet_on || text_on;
+  assign midi_off = packet_off || text_off;
+  assign midi_note = (text_on || text_off) ? text_note : packet_note;
+  assign midi_all_off = packet_all || text_all || pc_session_reset;
+  assign cmd_ok = packet_on || packet_off || packet_all || text_ok;
 
-      midi_text_rx midi_text_rx (
-        .clk          ( aud_clk      ),
-        .rst_n        ( aud_rst_n    ),
-        .rx_data      ( rx_byte      ),
-        .rx_valid     ( rx_valid     ),
-        .midi_on      ( midi_on      ),
-        .midi_off     ( midi_off     ),
-        .midi_note    ( midi_note    ),
-        .midi_all_off ( midi_all_off ),
-        .bend         ( bend         ),
-        .mod_wheel    ( mod_wheel    ),
-        .set_valid    ( set_valid    ),
-        .set_idx      ( set_idx      ),
-        .set_val      ( set_val      ),
-        .cmd_ok       ( cmd_ok       )
-      );
-
-      assign rx_activity    = rx_valid;
-      assign uart_tx        = 1'b1;          // nothing to send back
-      assign pc_wr          = 1'b0;
-      assign pc_wdata       = '0;
-      assign pc_title_char  = 8'h20;
-      assign pc_title_valid = 1'b0;
-      assign pc_title_chg   = 1'b0;
-    end
-    else begin : g_packets
-      pc_link pc_link (
-        .clk           ( aud_clk        ),
-        .rst_n         ( aud_rst_n      ),
-        .uart_rx_pin   ( uart_rx        ),
-        .uart_tx_pin   ( uart_tx        ),
-        .fifo_wr       ( pc_wr          ),
-        .fifo_data     ( pc_wdata       ),
-        .fifo_level    ( pc_level       ),
-        .midi_on       ( midi_on        ),
-        .midi_off      ( midi_off       ),
-        .midi_note     ( midi_note      ),
-        .midi_all_off  ( midi_all_off   ),
-        .title_idx     ( pc_title_idx   ),
-        .title_char    ( pc_title_char  ),
-        .title_valid   ( pc_title_valid ),
-        .title_changed ( pc_title_chg   )
-      );
-      assign rx_activity = !uart_rx;
-      assign cmd_ok      = midi_on || midi_off || midi_all_off;
-      assign bend        = '0;
-      assign mod_wheel   = '0;
-      assign set_valid   = 1'b0;
-      assign set_idx     = '0;
-      assign set_val     = '0;
-    end
-  endgenerate
-
+  wire pc_fifo_rst_n = aud_rst_n && !pc_session_reset;
   async_fifo #( .DATA_WIDTH ( 16 ), .ADDR_WIDTH ( 12 ) ) pc_fifo (
-    .wr_clk ( aud_clk ), .wr_rst_n ( aud_rst_n ), .wr_en ( pc_wr ), .wr_data ( pc_wdata ),
+    .wr_clk ( aud_clk ), .wr_rst_n ( pc_fifo_rst_n ), .wr_en ( pc_wr ), .wr_data ( pc_wdata ),
     .full   (         ), .wr_level ( pc_level  ),
-    .rd_clk ( aud_clk ), .rd_rst_n ( aud_rst_n ), .rd_en ( pc_rd ), .rd_data ( pc_q ),
+    .rd_clk ( aud_clk ), .rd_rst_n ( pc_fifo_rst_n ), .rd_en ( pc_rd ), .rd_data ( pc_q ),
     .empty  ( pc_empty ), .rd_level (          )
   );
 //____________________________________________________________________________//
