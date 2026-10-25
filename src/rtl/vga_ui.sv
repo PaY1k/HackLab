@@ -168,11 +168,14 @@ module vga_ui #(
   end
 
   // Dynamic cells, written during vertical blanking
-  localparam N_DYN = 18;
+  localparam N_DYN = 20;
   logic [4:0]  dyn_idx;
   logic        dyn_active;
   logic [12:0] dyn_addr;
   logic [11:0] dyn_data;
+
+  // track 01 "Синтезатор нот" has no length / position: no progress bar there
+  wire synth_track = ( track_idx == 3'd0 );
 
   // CP866 codes for the status text
   function automatic [7:0] status_char (input playing, input [3:0] i);
@@ -204,15 +207,18 @@ module vga_ui #(
       dyn_addr = 13'( 30 * 128 + 71 );
       dyn_data = { 4'd0, 8'h30 + 8'( ( volume >= 4'd10 ) ? volume - 4'd10 : volume ) };
     end
-    else begin                                                     // row 33, col 92..96: length
-      dyn_addr = 13'( 33 * 128 + 92 ) + 13'( dyn_idx - 5'd13 );
+    else begin                                                     // row 33, col 90..96: "/ mm:ss"
+      dyn_addr = 13'( 33 * 128 + 90 ) + 13'( dyn_idx - 5'd13 );
       case ( dyn_idx - 5'd13 )
-        5'd0:    dyn_data = { 4'd1, len_valid ? 8'h30 + 8'( len_bcd[15:12] ) : 8'h2D };
-        5'd1:    dyn_data = { 4'd1, len_valid ? 8'h30 + 8'( len_bcd[11: 8] ) : 8'h2D };
-        5'd2:    dyn_data = { 4'd1, 8'h3A };
-        5'd3:    dyn_data = { 4'd1, len_valid ? 8'h30 + 8'( len_bcd[ 7: 4] ) : 8'h2D };
+        5'd0:    dyn_data = { 4'd2, 8'h2F };                                                   // "/"
+        5'd1:    dyn_data = { 4'd1, 8'h20 };
+        5'd2:    dyn_data = { 4'd1, len_valid ? 8'h30 + 8'( len_bcd[15:12] ) : 8'h2D };
+        5'd3:    dyn_data = { 4'd1, len_valid ? 8'h30 + 8'( len_bcd[11: 8] ) : 8'h2D };
+        5'd4:    dyn_data = { 4'd1, 8'h3A };
+        5'd5:    dyn_data = { 4'd1, len_valid ? 8'h30 + 8'( len_bcd[ 7: 4] ) : 8'h2D };
         default: dyn_data = { 4'd1, len_valid ? 8'h30 + 8'( len_bcd[ 3: 0] ) : 8'h2D };
       endcase
+      if ( synth_track ) dyn_data = 12'h020;                       // synth: no track length
     end
   end
 
@@ -471,11 +477,11 @@ module vga_ui #(
 
     // progress bar x 216..727, y 530..536, knob r = 7 at (216 + progress/2, 533)
     knob_x      = 11'd216 + 11'( progress[9:1] );
-    g1.pb_track = ( h1 >= 11'd216 ) && ( h1 < 11'd728 ) && ( v1 >= 10'd530 ) && ( v1 < 10'd537 );
+    g1.pb_track = !synth_track && ( h1 >= 11'd216 ) && ( h1 < 11'd728 ) && ( v1 >= 10'd530 ) && ( v1 < 10'd537 );
     g1.pb_fill  = ( h1 <= knob_x );
     kdx = absdiff11( h1, knob_x );
     kdy = 10'( absdiff11( 11'( v1 ), 11'd533 ) );
-    if ( kdx < 11'd11 && kdy < 10'd11 ) begin
+    if ( !synth_track && kdx < 11'd11 && kdy < 10'd11 ) begin
       g1.knob      = ( kdx * kdx + kdy * kdy ) <= 11'd49;
       g1.knob_glow = ( kdx * kdx + kdy * kdy ) <= 11'd100;
     end

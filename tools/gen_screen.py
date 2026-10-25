@@ -11,7 +11,7 @@ Cells written at run time (do not put static text there):
   vga_ui.sv:
     row 1,  col 84..94  play / pause status
     row 30, col 70..71  volume              ("08")
-    row 33, col 92..96  track length        ("05:00" / "--:--")
+    row 33, col 90..96  track length        ("/ 05:00", "/ --:--", empty on track 01)
   screen_text_ctrl.sv:
     row 1,  col 72..83  source              (СИНТЕЗ, BRAM, SD-КАРТА, ПК / UART)
     row 30, col 4..43   current track title
@@ -54,7 +54,6 @@ TEXT = [
     (29, 4,  "СЕЙЧАС ИГРАЕТ", DIM),
     (29, 70, "ГРОМКОСТЬ", DIM),
     (30, 72, "/15", DIM),
-    (33, 90, "/", DIM),
 ]
 
 
