@@ -143,7 +143,8 @@ module screen_text_ctrl #(
           3'd5: begin slot = S_PC; use_pc = pc_title_valid; end
           default: begin
             sd_file     = ( track == 3'd4 );
-            use_sd_name = ( { 1'b0, sd_file } < sd_nfiles );
+            // a file that cannot be played shows "SD: ошибка формата" instead of its name
+            use_sd_name = ( { 1'b0, sd_file } < sd_nfiles ) && ( sd_status != SD_FMTERR );
             slot        = sd_msg( sd_status );
           end
         endcase

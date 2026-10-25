@@ -88,7 +88,6 @@ module sd_player #(
   logic        wav_byte;            // a file byte goes to the WAV parser now
   logic [ 7:0] wav_b;
 
-  assign hold = ( mode == M_DATA ) && ( fifo_level >= FIFO_HIGH );
 
 //------------- WAV parser                                       -------------//
   typedef enum logic [2:0] { W_RIFF, W_HDR, W_FMT, W_SKIP, W_DATA, W_END } wst_t;
@@ -100,15 +99,17 @@ module sd_player #(
   logic [31:0] fmt_rate, fmt_brate;
   logic [ 5:0] fmt_i;
   logic [31:0] data_size, data_done;
-  logic [ 1:0] fr_i;                // byte inside the frame
   logic [ 7:0] lo_b;
   logic signed [15:0] left_s;
   logic        fmt_bad;
   logic        data_started;        // pulse: data chunk found
 
-  wire         st16   = ( fmt_bits == 16'd16 );
   wire         stereo = ( fmt_ch == 16'd2 );
-  wire  [1:0]  fr_last = { st16 & stereo, st16 ^ stereo };   // bytes per frame - 1
+  wire  [1:0]  bmax   = fmt_bits[4:3] - 2'd1;     // bytes per sample - 1: 8 bit 0, 16 bit 1, 24 bit 2, 32 bit 3
+  logic [1:0]  bi;                                // byte inside the sample
+  logic        chn;                               // 0 left / mono, 1 right
+  wire  signed [15:0] s_new = ( bmax == 2'd0 ) ? { ~wav_b[7], wav_b[6:0], 8'h00 }   // 8 bit unsigned
+                                               : { wav_b, lo_b };                   // top 16 bits, little endian
 
   function automatic signed [15:0] mono (input signed [15:0] a, input signed [15:0] b);
     logic signed [16:0] s;
@@ -131,7 +132,8 @@ module sd_player #(
       fmt_i        <= '0;
       data_size    <= '0;
       data_done    <= '0;
-      fr_i         <= '0;
+      bi           <= '0;
+      chn          <= 1'b0;
       lo_b         <= '0;
       left_s       <= '0;
       fmt_bad      <= 1'b0;
@@ -148,13 +150,28 @@ module sd_player #(
         w_hi      <= '0;
         fmt_bad   <= 1'b0;
         data_done <= '0;
-        fr_i      <= '0;
+        bi        <= '0;
+        chn       <= 1'b0;
       end
       else if ( wav_byte ) begin
         case ( wst )
-          W_RIFF: begin                       // "RIFF", size, "WAVE"
+          W_RIFF: begin                       // "RIFF", size, "WAVE": anything else is not a WAV
             w_cnt <= w_cnt - 1'b1;
-            if ( w_cnt == 32'd1 ) begin wst <= W_HDR; w_hi <= '0; end
+            case ( w_cnt[3:0] )
+              4'd12: if ( wav_b != "R" ) fmt_bad <= 1'b1;
+              4'd11: if ( wav_b != "I" ) fmt_bad <= 1'b1;
+              4'd10, 4'd9: if ( wav_b != "F" ) fmt_bad <= 1'b1;
+              4'd4:  if ( wav_b != "W" ) fmt_bad <= 1'b1;
+              4'd3:  if ( wav_b != "A" ) fmt_bad <= 1'b1;
+              4'd2:  if ( wav_b != "V" ) fmt_bad <= 1'b1;
+              4'd1:  if ( wav_b != "E" ) fmt_bad <= 1'b1;
+              default: ;
+            endcase
+            if ( w_cnt == 32'd1 ) begin
+              if ( fmt_bad || wav_b != "E" ) wst <= W_END;
+              else                           wst <= W_HDR;
+              w_hi <= '0;
+            end
           end
           W_HDR: begin                        // chunk id + size
             w_hi <= w_hi + 1'b1;
@@ -171,10 +188,13 @@ module sd_player #(
                 w_cnt        <= { wav_b, w_size[31:8] };
                 data_size    <= { wav_b, w_size[31:8] };
                 data_started <= 1'b1;
-                fr_i         <= '0;
+                bi           <= '0;
+                chn          <= 1'b0;
+                // integer PCM (1, or 0xFFFE extensible), mono / stereo, 8/16/24/32 bit
                 fmt_bad      <= !( ( fmt_tag == 16'd1 || fmt_tag == 16'hFFFE ) &&
                                    ( fmt_ch == 16'd1 || fmt_ch == 16'd2 ) &&
-                                   ( fmt_bits == 16'd8 || fmt_bits == 16'd16 ) );
+                                   ( fmt_bits == 16'd8 || fmt_bits == 16'd16 ||
+                                     fmt_bits == 16'd24 || fmt_bits == 16'd32 ) );
               end
               else begin
                 wst   <= W_SKIP;              // other chunk: skip it (+ pad byte if odd)
@@ -208,29 +228,26 @@ module sd_player #(
             w_cnt     <= w_cnt - 1'b1;
             data_done <= data_done + 1'b1;
             if ( w_cnt == 32'd1 ) wst <= W_END;
-            fr_i <= ( fr_i == fr_last ) ? 2'd0 : fr_i + 1'b1;
-            if ( !st16 ) begin                                 // 8 bit unsigned
+            // keep the top two bytes of each sample, mix stereo to mono
+            if ( bmax != 2'd0 && bi == bmax - 2'd1 ) lo_b <= wav_b;
+            if ( bi == bmax ) begin
+              bi <= '0;
               if ( !stereo ) begin
-                fifo_data <= { ~wav_b[7], wav_b[6:0], 8'h00 };
+                fifo_data <= s_new;
                 fifo_wr   <= 1'b1;
               end
-              else if ( fr_i == 2'd0 )
-                left_s <= { ~wav_b[7], wav_b[6:0], 8'h00 };
+              else if ( !chn ) begin
+                left_s <= s_new;
+                chn    <= 1'b1;
+              end
               else begin
-                fifo_data <= mono( left_s, { ~wav_b[7], wav_b[6:0], 8'h00 } );
+                fifo_data <= mono( left_s, s_new );
                 fifo_wr   <= 1'b1;
+                chn       <= 1'b0;
               end
             end
-            else begin                                         // 16 bit signed LE
-              if ( !fr_i[0] )
-                lo_b <= wav_b;
-              else if ( !stereo || fr_i == 2'd3 ) begin
-                fifo_data <= stereo ? mono( left_s, { wav_b, lo_b } ) : { wav_b, lo_b };
-                fifo_wr   <= 1'b1;
-              end
-              else
-                left_s <= { wav_b, lo_b };
-            end
+            else
+              bi <= bi + 1'b1;
           end
           default: ;                                           // W_END: ignore the rest
         endcase
@@ -432,11 +449,16 @@ module sd_player #(
 
   // directory entry complete at byte 31: is it a WAV file?
   wire e_last  = rd_valid && mode == M_DIR && rd_idx[4:0] == 5'd31 && !dir_end;
-  wire e_is_wav = ( e_name[0] != 8'h00 ) && ( e_name[0] != 8'hE5 ) && ( e_attr != 8'h0F ) &&
-                  ( ( e_attr & 8'h18 ) == 8'h00 ) &&
+  // skipped: free / deleted entries, long-name parts, hidden / system files, volume label,
+  // folders, macOS "._NAME" companions (8.3 name starts with "_")
+  wire e_is_wav = ( e_name[0] != 8'h00 ) && ( e_name[0] != 8'hE5 ) && ( e_name[0] != "_" ) &&
+                  ( e_attr != 8'h0F ) && ( ( e_attr & 8'h1E ) == 8'h00 ) &&
                   ( e_name[8] == "W" ) && ( e_name[9] == "A" ) && ( e_name[10] == "V" );
 
   assign wav_byte = rd_valid && mode == M_DATA && file_left != 32'd0 && !stop_req;
+
+  // pause the card while the FIFO is full; not when the file is being left anyway
+  assign hold = ( mode == M_DATA ) && ( fifo_level >= FIFO_HIGH ) && !stop_req && !start_req;
   assign wav_b    = rd_data;
 
   always_ff @( posedge clk or negedge rst_n ) begin
@@ -484,7 +506,7 @@ module sd_player #(
       if ( e_last && e_is_wav && nfiles < 2'( MAX_FILES ) ) begin
         for ( int i = 0; i < 8; i++ ) f_name[nfiles][i] <= e_name[i];
         f_clus[nfiles] <= { e_hi, e_lo };
-        f_size[nfiles] <= e_size;
+        f_size[nfiles] <= { rd_data, e_size[23:0] };   // byte 31 (size MSB) is arriving right now
         nfiles <= nfiles + 1'b1;
       end
 
